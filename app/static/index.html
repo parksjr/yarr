@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>yarr — YouTube to Plex music</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="logo">♫</span><span>yarr</span></div>
+    <p class="tagline">YouTube → MP3 → your Plex music library</p>
+  </header>
+
+  <main>
+    <section class="card" id="fetch-card">
+      <h1>Add a song</h1>
+      <p class="hint">Paste a single YouTube video URL. The audio is downloaded as an MP3 and the metadata is pulled from the video so you can check and fix it before saving.</p>
+      <form id="fetch-form" class="row">
+        <input id="url-input" type="url" placeholder="https://www.youtube.com/watch?v=…" autocomplete="off" required>
+        <button id="fetch-button" type="submit">Fetch</button>
+      </form>
+      <div id="fetch-error" class="error hidden" role="alert"></div>
+      <div id="progress" class="progress hidden">
+        <div class="progress-bar"><div id="progress-fill" class="progress-fill"></div></div>
+        <p id="progress-text" class="progress-text">Working…</p>
+      </div>
+    </section>
+
+    <section class="card hidden" id="result-card">
+      <div class="result-layout">
+        <div class="cover-box">
+          <img id="cover-img" alt="Cover art" class="cover hidden">
+          <div id="cover-fallback" class="cover-fallback">No cover</div>
+        </div>
+
+        <form id="save-form" class="meta-form">
+          <h2>Check the metadata</h2>
+          <div class="grid">
+            <label class="field">Artist
+              <input id="f-artist" list="artist-list" autocomplete="off" required>
+            </label>
+            <label class="field">Track title
+              <input id="f-title" autocomplete="off" required>
+            </label>
+            <label class="field">Album
+              <input id="f-album" list="album-list" autocomplete="off" placeholder="Leave empty to save into the artist folder">
+            </label>
+            <label class="field">Album artist
+              <input id="f-album-artist" autocomplete="off">
+            </label>
+            <label class="field">Track number
+              <input id="f-track" type="number" min="1" step="1" autocomplete="off">
+            </label>
+            <label class="field">Year
+              <input id="f-date" placeholder="2025" autocomplete="off">
+            </label>
+            <label class="field wide">Genre
+              <input id="f-genre" autocomplete="off">
+            </label>
+          </div>
+
+          <p class="path-line">Destination: <code id="path-preview">—</code></p>
+
+          <div class="actions">
+            <button id="save-button" type="submit">Save to library</button>
+            <button id="reset-button" type="button" class="secondary">Start over</button>
+          </div>
+        </form>
+      </div>
+
+      <div id="save-error" class="error hidden" role="alert"></div>
+      <div id="save-success" class="success hidden" role="status"></div>
+    </section>
+  </main>
+
+  <datalist id="artist-list"></datalist>
+  <datalist id="album-list"></datalist>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

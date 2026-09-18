@@ -1,0 +1,3 @@
+# Netscape HTTP Cookie File
+# This is an empty placeholder. Point COOKIES_HOST_PATH at a real cookies.txt
+# exported from a logged-in browser to enable YouTube login cookies.
