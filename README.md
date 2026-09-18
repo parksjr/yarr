@@ -48,12 +48,46 @@ adjust anything, and click **Save to library**. The file lands under
 
 ## Install on the home lab
 
-1. Push this folder to a Git repo.
-2. In Dokploy (or plain `docker compose`), point at the repo with
-   `docker-compose.yml`.
-3. Set `MUSIC_HOST_PATH` to the same folder Lidarr/Plex use for music, and set
-   `PUID`/`PGID` to your media user.
-4. Deploy and open the UI on port 7734 (or put it behind your reverse proxy).
+A multi-arch image (`linux/amd64` + `linux/arm64`) is published to GitHub
+Container Registry on every push to `main`:
+
+```text
+ghcr.io/parksjr/yarr:latest
+```
+
+Use a compose file like this, replacing the paths and the uid/gid:
+
+```yaml
+services:
+  yarr:
+    image: ghcr.io/parksjr/yarr:latest
+    container_name: yarr
+    restart: unless-stopped
+    ports:
+      - "7734:7734"
+    environment:
+      MUSIC_LIBRARY_PATH: /music
+      STAGING_PATH: /data/staging
+      AUDIO_QUALITY: "192"
+      PUID: "1000"          # set to your media user id
+      PGID: "1000"          # set to your media group id
+      TZ: "America/New_York"
+    volumes:
+      # The same music folder Lidarr/Plex use:
+      - /path/to/your/plex/music:/music
+      # Scratch space for in-flight downloads:
+      - yarr_data:/data
+      # Optional: cookies.txt from a logged-in browser (avoids many 403s):
+      # - /path/to/cookies.txt:/cookies.txt:ro
+
+volumes:
+  yarr_data:
+```
+
+Then run `docker compose up -d` and open `http://YOUR_SERVER_IP:7734`.
+
+To build from source instead, clone the repo and use the included
+`docker-compose.yml`.
 
 ## Notes and limits
 
