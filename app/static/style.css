@@ -163,9 +163,9 @@ button.secondary { background: var(--surface-2); color: var(--text); border: 1px
 }
 .field.wide { grid-column: 1 / -1; }
 
-/* "apply to all tracks" toggles only appear in split mode */
+/* "apply to all tracks" toggles appear on every shared field */
 .apply-toggle {
-  display: none;
+  display: inline-flex;
   align-items: center;
   gap: 6px;
   font-size: 0.75rem;
@@ -173,7 +173,6 @@ button.secondary { background: var(--surface-2); color: var(--text); border: 1px
   cursor: pointer;
   user-select: none;
 }
-.meta-form.split-mode .apply-toggle { display: inline-flex; }
 .apply-toggle input[type="checkbox"] {
   width: auto;
   height: auto;
@@ -186,7 +185,49 @@ button.secondary { background: var(--surface-2); color: var(--text); border: 1px
 .path-line { color: var(--muted); font-size: 0.9rem; margin: 14px 0; word-break: break-all; }
 .path-line code { color: var(--accent); }
 
-.actions { display: flex; gap: 10px; margin-top: 6px; }
+.actions { display: flex; gap: 10px; margin-top: 6px; flex-wrap: wrap; }
+
+.batch-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+.batch-header h2 { margin: 0; }
+.batch-header #batch-count { color: var(--accent); font-weight: 700; }
+.batch-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+.batch-list {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+}
+.batch-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.9rem;
+  cursor: pointer;
+  border-radius: 6px;
+}
+.batch-item:hover { background: var(--surface-2); }
+.batch-item.selected { background: rgba(110, 231, 183, 0.10); }
+.batch-item:last-child { border-bottom: 0; }
+.batch-item.current { color: var(--muted); font-style: italic; }
+.batch-remove {
+  background: transparent;
+  color: var(--muted);
+  padding: 0 6px;
+  font-size: 1rem;
+  line-height: 1;
+  border-radius: 6px;
+}
+.batch-remove:hover { color: var(--danger); filter: none; }
+.batch-message { margin-top: 12px; }
 
 @media (max-width: 640px) {
   .result-layout { grid-template-columns: 1fr; }

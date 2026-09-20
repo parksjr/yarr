@@ -15,7 +15,7 @@
 
   <main>
     <section class="card" id="fetch-card">
-      <h1>Add a song</h1>
+      <h1 id="fetch-heading">Add a song</h1>
       <p class="hint">Paste a single YouTube video URL. The audio is downloaded as an MP3 and the metadata is pulled from the video so you can check and fix it before saving.</p>
       <form id="fetch-form" class="row">
         <input id="url-input" type="url" placeholder="https://www.youtube.com/watch?v=…" autocomplete="off" required>
@@ -26,6 +26,18 @@
         <div class="progress-bar"><div id="progress-fill" class="progress-fill"></div></div>
         <p id="progress-text" class="progress-text">Working…</p>
       </div>
+    </section>
+
+    <section class="card hidden" id="batch-card">
+      <div class="batch-header">
+        <h2>Batch <span id="batch-count">0 songs</span></h2>
+        <div class="batch-actions">
+          <button id="batch-save-button" type="button">Save songs to library</button>
+          <button id="batch-clear-button" type="button" class="secondary">Clear</button>
+        </div>
+      </div>
+      <ul id="batch-list" class="batch-list"></ul>
+      <div id="batch-message" class="batch-message hidden"></div>
     </section>
 
     <section class="card hidden" id="result-card">
@@ -97,6 +109,7 @@
 
           <div class="actions">
             <button id="save-button" type="submit">Save to library</button>
+            <button id="add-to-batch-button" type="button" class="secondary">Add another song</button>
             <button id="reset-button" type="button" class="secondary">Start over</button>
           </div>
         </form>

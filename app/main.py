@@ -42,6 +42,14 @@ class SaveManyRequest(BaseModel):
     tracks: list[SaveRequest]
 
 
+class BatchTrackRequest(SaveRequest):
+    job_id: str
+
+
+class BatchSaveRequest(BaseModel):
+    tracks: list[BatchTrackRequest]
+
+
 def _run_fetch(job_id: str, url: str) -> None:
     job = store.get(job_id)
     if job is None:
@@ -190,6 +198,38 @@ def save_many(job_id: str, req: SaveManyRequest):
         job.stage = "Save failed"
         job.error = str(exc)
         raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.post("/api/batch/save")
+def batch_save(req: BatchSaveRequest):
+    if not req.tracks:
+        raise HTTPException(status_code=400, detail="No songs to save.")
+    root = config.MUSIC_LIBRARY_PATH.resolve()
+    if not root.exists():
+        root.mkdir(parents=True, exist_ok=True)
+
+    # Validate every queued job up front so a bad one does not leave a
+    # half-saved batch behind.
+    jobs = []
+    for i, track in enumerate(req.tracks):
+        job = store.get(track.job_id)
+        if job is None or job.status not in ("done", "save_error"):
+            raise HTTPException(status_code=400, detail=f"Song {i + 1} is not ready to save. Fetch it again.")
+        if not job.mp3_path or not os.path.exists(job.mp3_path):
+            raise HTTPException(status_code=400, detail=f"Song {i + 1} is missing its audio file. Fetch it again.")
+        jobs.append(job)
+
+    saved = []
+    for i, (track, job) in enumerate(zip(req.tracks, jobs)):
+        meta = track.model_dump(exclude={"job_id"})
+        metadata.apply_metadata(job.mp3_path, meta)
+        dest = library.place_file(Path(job.mp3_path), root, meta)
+        saved.append({"path": str(dest), "relative": str(dest.relative_to(root))})
+        job.status = "saved"
+        job.stage = "Saved"
+        if job.staging_dir and os.path.isdir(job.staging_dir):
+            shutil.rmtree(job.staging_dir, ignore_errors=True)
+    return {"status": "saved", "tracks": saved}
 
 
 @app.post("/api/jobs/{job_id}/save")
