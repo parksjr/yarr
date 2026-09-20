@@ -16,6 +16,8 @@ class Job:
     error: Optional[str] = None
     info: Optional[dict] = None
     metadata: Optional[dict] = None
+    chapters: Optional[list] = None
+    split_paths: Optional[list] = None
     staging_dir: Optional[str] = None
     mp3_path: Optional[str] = None
     result_path: Optional[str] = None
@@ -30,6 +32,9 @@ class Job:
             "error": self.error,
             "info": self.info,
             "metadata": self.metadata,
+            "chapters": self.chapters,
+            "has_chapters": bool(self.chapters and len(self.chapters) > 1),
+            "split_ready": bool(self.split_paths),
             "result_path": self.result_path,
             "has_cover": bool(self.mp3_path and os.path.exists(self.mp3_path)),
         }

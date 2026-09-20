@@ -11,7 +11,20 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       ffmpeg \
       ca-certificates \
+      curl \
+      unzip \
  && rm -rf /var/lib/apt/lists/*
+
+# yt-dlp needs a JS runtime to solve YouTube's bot-check JS challenges for
+# some videos (e.g. long compilations). Deno is yt-dlp's default runtime.
+ARG TARGETARCH
+ENV DENO_VERSION=v2.9.7
+RUN if [ "$TARGETARCH" = "arm64" ]; then DENO_ARCH="aarch64-unknown-linux-gnu"; else DENO_ARCH="x86_64-unknown-linux-gnu"; fi \
+ && curl -fsSL "https://github.com/denoland/deno/releases/download/${DENO_VERSION}/deno-${DENO_ARCH}.zip" -o /tmp/deno.zip \
+ && unzip -o /tmp/deno.zip -d /usr/local/bin \
+ && chmod +x /usr/local/bin/deno \
+ && rm /tmp/deno.zip \
+ && deno --version
 
 WORKDIR /app
 

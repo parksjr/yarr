@@ -29,6 +29,17 @@
     </section>
 
     <section class="card hidden" id="result-card">
+      <div id="chapters-card" class="chapters-card hidden">
+        <div class="chapters-info">
+          <span class="chapters-badge">♫ Chapters</span>
+          <p id="chapters-text" class="chapters-text"></p>
+        </div>
+        <div class="chapters-actions">
+          <button id="single-mode-button" type="button" class="secondary">Save as one track</button>
+          <button id="split-mode-button" type="button">Split into songs</button>
+        </div>
+      </div>
+
       <div class="result-layout">
         <div class="cover-box">
           <img id="cover-img" alt="Cover art" class="cover hidden">
@@ -36,29 +47,50 @@
         </div>
 
         <form id="save-form" class="meta-form">
-          <h2>Check the metadata</h2>
+          <div id="wizard-bar" class="wizard-bar hidden">
+            <div class="wizard-nav">
+              <button id="prev-track" type="button" class="secondary">‹ Prev</button>
+              <span id="wizard-position" class="wizard-position"></span>
+              <button id="next-track" type="button" class="secondary">Next ›</button>
+            </div>
+            <div id="wizard-chapter" class="wizard-chapter"></div>
+            <div class="wizard-tools">
+              <button id="back-single" type="button" class="secondary">Back to one track</button>
+            </div>
+          </div>
+          <h2 id="form-heading">Check the metadata</h2>
           <div class="grid">
-            <label class="field">Artist
+            <div class="field">
+              <label for="f-artist">Artist</label>
               <input id="f-artist" list="artist-list" autocomplete="off" required>
-            </label>
+              <label class="apply-toggle"><input type="checkbox" id="apply-artist"> apply to all tracks</label>
+            </div>
             <label class="field">Track title
               <input id="f-title" autocomplete="off" required>
             </label>
-            <label class="field">Album
+            <div class="field">
+              <label for="f-album">Album</label>
               <input id="f-album" list="album-list" autocomplete="off" placeholder="Leave empty to save into the artist folder">
-            </label>
-            <label class="field">Album artist
+              <label class="apply-toggle"><input type="checkbox" id="apply-album"> apply to all tracks</label>
+            </div>
+            <div class="field">
+              <label for="f-album-artist">Album artist</label>
               <input id="f-album-artist" autocomplete="off">
-            </label>
+              <label class="apply-toggle"><input type="checkbox" id="apply-album-artist"> apply to all tracks</label>
+            </div>
             <label class="field">Track number
               <input id="f-track" type="number" min="1" step="1" autocomplete="off">
             </label>
-            <label class="field">Year
+            <div class="field">
+              <label for="f-date">Year</label>
               <input id="f-date" placeholder="2025" autocomplete="off">
-            </label>
-            <label class="field wide">Genre
+              <label class="apply-toggle"><input type="checkbox" id="apply-date"> apply to all tracks</label>
+            </div>
+            <div class="field wide">
+              <label for="f-genre">Genre</label>
               <input id="f-genre" autocomplete="off">
-            </label>
+              <label class="apply-toggle"><input type="checkbox" id="apply-genre"> apply to all tracks</label>
+            </div>
           </div>
 
           <p class="path-line">Destination: <code id="path-preview">—</code></p>

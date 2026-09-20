@@ -14,6 +14,10 @@ structure. Runs as a Docker container next to your other home-lab apps.
 5. Saves the file into your mounted music library. The Artist and Album fields
    become the folder names, so typing an existing artist/album reuses that
    folder and typing a new one creates it.
+6. If the video has chapters (for example a long mix where the uploader marked
+   the start of each song), yarr detects them and lets you split the audio into
+   one MP3 per chapter. You can step through each track's metadata form and fix
+   it before saving all of them in one go.
 
 ## Default port
 
@@ -92,6 +96,10 @@ To build from source instead, clone the repo and use the included
 ## Notes and limits
 
 - One video at a time. Playlists are rejected on purpose.
+- Chapter splits are cut with `ffmpeg` stream copy, so they stay at the original
+  MP3 quality and finish quickly. The last chapter runs to the end of the video.
+- Some YouTube videos (often long compilations) trigger a bot check. The image
+  bundles the `yt-dlp-ejs` challenge solver and a Deno runtime to handle that.
 - The library mount must be writable by the `PUID`/`PGID` user.
 - This app has no login. Keep it on your private network or put it behind your
   normal auth proxy.

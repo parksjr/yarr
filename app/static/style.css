@@ -97,6 +97,44 @@ button.secondary { background: var(--surface-2); color: var(--text); border: 1px
 }
 .progress-text { color: var(--muted); font-size: 0.85rem; margin: 8px 0 0; }
 
+.chapters-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 14px;
+  margin-bottom: 16px;
+  border: 1px solid var(--accent-strong);
+  border-radius: 8px;
+  background: rgba(110, 231, 183, 0.06);
+}
+.chapters-badge {
+  display: inline-block;
+  font-weight: 700;
+  color: var(--accent);
+  margin-bottom: 4px;
+}
+.chapters-text { margin: 0; color: var(--text); font-size: 0.9rem; }
+.chapters-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+
+.wizard-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  margin-bottom: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+.wizard-nav { display: flex; align-items: center; gap: 10px; }
+.wizard-position { font-weight: 700; min-width: 74px; text-align: center; }
+.wizard-chapter { color: var(--muted); font-size: 0.85rem; flex: 1; min-width: 160px; }
+.wizard-tools { display: flex; gap: 8px; flex-wrap: wrap; }
+
 .result-layout {
   display: grid;
   grid-template-columns: 200px 1fr;
@@ -124,6 +162,26 @@ button.secondary { background: var(--surface-2); color: var(--text); border: 1px
   color: var(--muted);
 }
 .field.wide { grid-column: 1 / -1; }
+
+/* "apply to all tracks" toggles only appear in split mode */
+.apply-toggle {
+  display: none;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.75rem;
+  color: var(--muted);
+  cursor: pointer;
+  user-select: none;
+}
+.meta-form.split-mode .apply-toggle { display: inline-flex; }
+.apply-toggle input[type="checkbox"] {
+  width: auto;
+  height: auto;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--accent-strong);
+  cursor: pointer;
+}
 
 .path-line { color: var(--muted); font-size: 0.9rem; margin: 14px 0; word-break: break-all; }
 .path-line code { color: var(--accent); }

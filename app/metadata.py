@@ -62,6 +62,38 @@ def guess_artist_track(title: str, uploader: str):
     return (uploader or "Unknown Artist"), (title or "Unknown Title")
 
 
+def chapter_tracks(chapters: list, info: dict, base_meta: dict) -> list[dict]:
+    """Build default metadata for one track per chapter.
+
+    Chapter titles usually contain only the song name, so the artist defaults
+    to the artist already guessed for the whole video (typically the uploader
+    or the ``Artist - ...`` part of the video title). If a chapter title itself
+    contains an ``Artist - Title`` separator, that wins.
+    """
+    info = info or {}
+    base_meta = base_meta or {}
+    uploader = info.get("uploader") or info.get("channel") or ""
+    default_artist = base_meta.get("artist") or uploader or "Unknown Artist"
+    default_album_artist = base_meta.get("album_artist") or default_artist
+
+    tracks = []
+    for ch in chapters or []:
+        chapter_title = str(ch.get("title") or "").strip() or f"Track {ch.get('index', len(tracks) + 1)}"
+        artist, title = guess_artist_track(chapter_title, default_artist)
+        tracks.append(
+            {
+                "title": title or chapter_title,
+                "artist": artist or default_artist,
+                "album_artist": default_album_artist,
+                "album": "",
+                "date": base_meta.get("date") or "",
+                "genre": base_meta.get("genre") or "",
+                "track": int(ch.get("index", len(tracks) + 1)),
+            }
+        )
+    return tracks
+
+
 def read_tags(mp3_path: str, info: dict) -> dict:
     tags: dict = {}
     try:
@@ -125,7 +157,7 @@ def read_cover(mp3_path: str) -> Optional[tuple]:
     return pic.mime or "image/jpeg", pic.data
 
 
-def apply_metadata(mp3_path: str, meta: dict) -> None:
+def apply_metadata(mp3_path: str, meta: dict, cover: Optional[tuple] = None) -> None:
     try:
         tags = ID3(mp3_path)
     except ID3NoHeaderError:
@@ -164,5 +196,10 @@ def apply_metadata(mp3_path: str, meta: dict) -> None:
     # comment/custom frames. Drop them so the MP3 stays clean in Plex.
     tags.delall("COMM")
     tags.delall("TXXX")
+
+    if cover is not None:
+        mime, data = cover
+        tags.delall("APIC")
+        tags.add(APIC(encoding=3, mime=mime, type=3, desc="Cover", data=data))
 
     tags.save(mp3_path)

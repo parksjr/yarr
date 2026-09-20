@@ -1,4 +1,7 @@
 fastapi==0.141.1
 uvicorn[standard]==0.53.0
 yt-dlp==2026.8.19
+# Provides the JS challenge-solver components yt-dlp needs for YouTube
+# bot-checked videos. Requires a JS runtime (deno is installed in the image).
+yt-dlp-ejs==0.8.0
 mutagen==1.48.1

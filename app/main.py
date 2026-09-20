@@ -9,7 +9,7 @@ from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from app import config, jobs, library, metadata, youtube
+from app import chapters, config, jobs, library, metadata, youtube
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -38,6 +38,10 @@ class SaveRequest(BaseModel):
     track: int | None = None
 
 
+class SaveManyRequest(BaseModel):
+    tracks: list[SaveRequest]
+
+
 def _run_fetch(job_id: str, url: str) -> None:
     job = store.get(job_id)
     if job is None:
@@ -56,6 +60,7 @@ def _run_fetch(job_id: str, url: str) -> None:
             k: info.get(k)
             for k in ("id", "title", "uploader", "channel", "webpage_url", "duration", "thumbnail")
         }
+        job.chapters = chapters.normalize_chapters(info.get("chapters"), info.get("duration"))
         job.progress = 1.0
         job.stage = "Ready"
         job.status = "done"
@@ -131,6 +136,60 @@ def preview(job_id: str, req: SaveRequest):
     root = config.MUSIC_LIBRARY_PATH.resolve()
     dest = library.build_path(root, req.model_dump())
     return {"path": str(dest.relative_to(root)), "absolute": str(dest)}
+
+
+@app.post("/api/jobs/{job_id}/split")
+def split(job_id: str):
+    job = store.get(job_id)
+    if job is None or job.status != "done":
+        raise HTTPException(status_code=400, detail="This download is not ready to split.")
+    if not job.chapters or len(job.chapters) < 2:
+        raise HTTPException(status_code=400, detail="This video does not have chapters to split.")
+    if not job.mp3_path or not os.path.exists(job.mp3_path):
+        raise HTTPException(status_code=400, detail="The MP3 file is missing. Fetch the video again.")
+    if not job.split_paths:
+        split_dir = Path(job.staging_dir) / "split"
+        job.split_paths = chapters.split_mp3_by_chapters(job.mp3_path, job.chapters, split_dir)
+    tracks = metadata.chapter_tracks(job.chapters, job.info, job.metadata)
+    return {"tracks": tracks}
+
+
+@app.post("/api/jobs/{job_id}/save_many")
+def save_many(job_id: str, req: SaveManyRequest):
+    job = store.get(job_id)
+    if job is None or job.status not in ("done", "save_error"):
+        raise HTTPException(status_code=400, detail="There is nothing ready to save. Fetch a video first.")
+    if not req.tracks:
+        raise HTTPException(status_code=400, detail="No tracks to save.")
+    if not job.split_paths or len(job.split_paths) != len(req.tracks):
+        raise HTTPException(status_code=400, detail="Split the video into chapters first.")
+    root = config.MUSIC_LIBRARY_PATH.resolve()
+    if not root.exists():
+        root.mkdir(parents=True, exist_ok=True)
+    cover = metadata.read_cover(job.mp3_path) if job.mp3_path else None
+    job.status = "saving"
+    job.stage = "Saving tracks"
+    saved = []
+    try:
+        for i, track in enumerate(req.tracks):
+            job.stage = f"Saving track {i + 1} of {len(req.tracks)}"
+            src = Path(job.split_paths[i])
+            if not src.exists():
+                raise RuntimeError(f"Track {i + 1} is missing. Split the video again.")
+            meta = track.model_dump()
+            metadata.apply_metadata(str(src), meta, cover=cover)
+            dest = library.place_file(src, root, meta)
+            saved.append({"path": str(dest), "relative": str(dest.relative_to(root))})
+        job.status = "saved"
+        job.stage = "Saved"
+        if job.staging_dir and os.path.isdir(job.staging_dir):
+            shutil.rmtree(job.staging_dir, ignore_errors=True)
+        return {"status": "saved", "tracks": saved}
+    except Exception as exc:
+        job.status = "save_error"
+        job.stage = "Save failed"
+        job.error = str(exc)
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 @app.post("/api/jobs/{job_id}/save")
