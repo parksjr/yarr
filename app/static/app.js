@@ -4,6 +4,7 @@ const fetchForm = $("fetch-form");
 const fetchHeading = $("fetch-heading");
 const fetchButton = $("fetch-button");
 const fetchError = $("fetch-error");
+const fetchSuccess = $("fetch-success");
 const progress = $("progress");
 const progressFill = $("progress-fill");
 const progressText = $("progress-text");
@@ -92,6 +93,16 @@ function setError(el, message) {
   }
   el.textContent = message;
   el.classList.remove("hidden");
+}
+
+function setFetchSuccess(message) {
+  if (!message) {
+    fetchSuccess.textContent = "";
+    fetchSuccess.classList.add("hidden");
+    return;
+  }
+  fetchSuccess.textContent = message;
+  fetchSuccess.classList.remove("hidden");
 }
 
 function showProgress(show) {
@@ -300,6 +311,37 @@ function setBatchMessage(message, kind) {
   batchMessage.classList.toggle("success", kind === "success");
 }
 
+// Reset the workspace after a successful save: clear the result card, the URL
+// input, and any error/success text so the next fetch starts clean. The batch
+// queue is intentionally left alone here; callers that save the queue clear it
+// themselves first.
+function resetAfterSave(message) {
+  jobId = null;
+  currentJob = null;
+  chapters = [];
+  tracks = [];
+  trackIndex = 0;
+  mode = "single";
+  editingBatch = null;
+  resetApplyToggles();
+  $("url-input").value = "";
+  resultCard.classList.add("hidden");
+  showWizard(false);
+  showChaptersCard(false);
+  setSourceBadge(null);
+  setError(saveError, "");
+  setError(fetchError, "");
+  saveSuccess.classList.add("hidden");
+  saveSuccess.textContent = "";
+  pathPreview.textContent = "—";
+  clearTimeout(previewTimer);
+  showProgress(false);
+  setFetchSuccess(message);
+  updateModeClasses();
+  renderBatchPanel();
+  $("url-input").focus();
+}
+
 function updateModeClasses() {
   const inSplit = mode === "split" || mode === "tracks";
   const editingTrack = !inSplit && editingBatch !== null;
@@ -323,6 +365,8 @@ function selectBatchTrack(i) {
   editingBatch = i;
   fillForm(batchTracks[i].meta);
   setCoverSrc(batchTracks[i].job_id);
+  setSourceBadge(batchTracks[i].source || null);
+  resultCard.classList.remove("hidden");
   loadAlbums($("f-artist").value.trim());
   updateModeClasses();
   renderBatchPanel();
@@ -430,7 +474,7 @@ function resetBatch() {
 function addCurrentToBatch() {
   if (!currentSongReady()) return;
   commitFormToTarget();
-  batchTracks.push({ job_id: currentJob.id, meta: currentJob.metadata || currentMeta() });
+  batchTracks.push({ job_id: currentJob.id, meta: currentJob.metadata || currentMeta(), source: currentJob.source || null });
   batchActive = true;
   editingBatch = null;
   currentJob = null;
@@ -465,19 +509,11 @@ async function saveBatch() {
     });
     const saved = data.tracks || [];
     const dir = saved.length ? saved[0].relative.split("/").slice(0, -1).join("/") : "";
-    setBatchMessage(`Saved ${saved.length} songs${dir ? ` to ${dir}/` : ""}.`, "success");
     batchTracks = [];
     batchDefaults = emptyBatchDefaults();
     batchActive = false;
-    editingBatch = null;
-    currentJob = null;
-    jobId = null;
-    resetApplyToggles();
-    resultCard.classList.add("hidden");
-    saveSuccess.classList.add("hidden");
-    saveSuccess.textContent = "";
-    updateModeClasses();
-    renderBatchPanel();
+    setBatchMessage("");
+    resetAfterSave(`Saved ${saved.length} songs${dir ? ` to ${dir}/` : ""}.`);
   } catch (err) {
     setBatchMessage(err.message, "error");
   } finally {
@@ -643,6 +679,7 @@ fetchForm.addEventListener("submit", async (event) => {
   }
   setError(fetchError, "");
   setError(saveError, "");
+  setFetchSuccess("");
   saveSuccess.classList.add("hidden");
   saveSuccess.textContent = "";
   resultCard.classList.add("hidden");
@@ -685,20 +722,14 @@ saveForm.addEventListener("submit", async (event) => {
       });
       const saved = data.tracks || [];
       const dir = saved.length ? saved[0].relative.split("/").slice(0, -1).join("/") : "";
-      saveSuccess.textContent = `Saved ${saved.length} tracks${dir ? ` to ${dir}/` : ""}.`;
-      saveSuccess.classList.remove("hidden");
-      pathPreview.textContent = `${saved.length} tracks saved`;
+      resetAfterSave(`Saved ${saved.length} tracks${dir ? ` to ${dir}/` : ""}.`);
     } else {
       const data = await api(`/api/jobs/${jobId}/save`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(currentMeta())
       });
-      currentJob.status = "saved";
-      saveSuccess.textContent = `Saved to ${data.relative}`;
-      saveSuccess.classList.remove("hidden");
-      pathPreview.textContent = data.relative;
-      renderBatchPanel();
+      resetAfterSave(`Saved to ${data.relative}`);
     }
   } catch (err) {
     setError(saveError, err.message);
