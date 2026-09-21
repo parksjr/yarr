@@ -26,10 +26,13 @@ class FetchResult:
 def detect(url: str) -> str:
     """Return the source name for a URL, or raise ValueError.
 
-    Only trusted domains are allowed. ``urlparse().hostname`` is lowercased
-    before matching so a mixed-case host cannot slip through.
+    Only http(s) URLs on trusted domains are allowed. ``urlparse().hostname``
+    is lowercased before matching so a mixed-case host cannot slip through.
     """
-    host = (urlparse(url).hostname or "").lower()
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError("Enter a YouTube or Spotify URL.")
+    host = (parsed.hostname or "").lower()
     if host == "youtu.be" or host == "youtube.com" or host.endswith(".youtube.com"):
         return "youtube"
     if host == "open.spotify.com" or host.endswith(".spotify.com"):

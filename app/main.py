@@ -50,6 +50,9 @@ class BatchSaveRequest(BaseModel):
     tracks: list[BatchTrackRequest]
 
 
+_SOURCE_LABELS = {"youtube": "YouTube", "spotify": "Spotify"}
+
+
 def _info_subset(info: dict) -> dict:
     """Whitelist the info fields we expose on a job.
 
@@ -62,9 +65,12 @@ def _info_subset(info: dict) -> dict:
         for k in ("id", "title", "uploader", "channel", "webpage_url", "duration", "thumbnail")
     }
     subset["source"] = info.get("source")
-    for k in ("artist", "album", "cover_url", "type", "count"):
-        if info.get(k) is not None:
-            subset[k] = info[k]
+    # Spotify-only keys must not leak onto YouTube jobs (keeps the pre-change
+    # YouTube payload exactly as before).
+    if info.get("source") == "spotify":
+        for k in ("artist", "album", "cover_url", "type", "count"):
+            if info.get(k) is not None:
+                subset[k] = info[k]
     return subset
 
 
@@ -77,7 +83,7 @@ def _run_fetch(job_id: str, url: str) -> None:
     try:
         src = source.detect(url)
         job.source = src
-        job.stage = f"Contacting {src.title()}"
+        job.stage = f"Contacting {_SOURCE_LABELS.get(src, src)}"
         result = source.fetch(job, url, staging, config.AUDIO_QUALITY)
         job.info = _info_subset(result.info)
         if result.tracks:
