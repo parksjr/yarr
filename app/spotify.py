@@ -121,6 +121,27 @@ def _sort_key(song):
     return (1, disc, track)
 
 
+def _clean_spotdl_errors(errors) -> list:
+    """Turn spotDL's internal error strings into short, human messages.
+
+    spotDL formats downloader errors as ``"<url> - <ExceptionClass>: <message>"``
+    (for example ``"https://open.spotify.com/track/... - LookupError: No results
+    found for song: Madonna - Vogue"``). The URL and exception class add noise
+    for a user, so strip them and keep the message.
+    """
+    cleaned = []
+    for err in errors or []:
+        text = str(err)
+        if " - " in text:
+            text = text.split(" - ", 1)[1]
+        if ": " in text:
+            text = text.split(": ", 1)[1]
+        text = text.strip()
+        if text and text not in cleaned:
+            cleaned.append(text)
+    return cleaned
+
+
 def _build_info(songs, tracks, url) -> dict:
     """Build the compact per-job info dict for single- and multi-track results."""
     if len(tracks) == 1:
@@ -213,6 +234,8 @@ def fetch(job: Job, url: str, staging_dir: Path, quality: str = "192") -> FetchR
     except Exception as exc:
         raise RuntimeError(f"Spotify download failed: {exc}") from exc
 
+    spotdl_errors = _clean_spotdl_errors(getattr(downloader, "errors", None))
+
     mp3_paths = []
     tracks = []
     failures = []
@@ -224,17 +247,16 @@ def fetch(job: Job, url: str, staging_dir: Path, quality: str = "192") -> FetchR
             failures.append(getattr(song, "name", None) or "unknown track")
 
     if not mp3_paths:
-        detail = "; ".join(failures[:3])
-        raise RuntimeError(
-            "None of the Spotify tracks could be downloaded."
-            + (f" Failures: {detail}" if detail else "")
-        )
+        detail = "; ".join(spotdl_errors or failures[:3])
+        if detail:
+            raise RuntimeError(f"Could not download this Spotify item. {detail}")
+        raise RuntimeError("Could not download this Spotify item.")
 
     if failures:
         logger.warning(
             "Spotify download was partial; %d track(s) failed: %s",
             len(failures),
-            failures,
+            "; ".join(spotdl_errors or failures),
         )
 
     info = _build_info(songs, tracks, url)
