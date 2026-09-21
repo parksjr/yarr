@@ -5,13 +5,23 @@ same way yt-dlp handles YouTube, so the rest of the app can treat both sources
 identically. spotDL is imported at module level here; this module itself is
 imported lazily by app/source.py only when a Spotify URL is fetched, so
 YouTube-only runs never pay the spotDL import cost.
+
+spotDL's ``SpotifyClient`` is a process-wide singleton: ``SpotifyClient.init``
+raises if it is called twice. yarr therefore initializes it exactly once
+(guarded by a lock) and builds a fresh ``Downloader`` (which owns its own
+asyncio loop) for every fetch, so repeated and concurrent Spotify fetches in
+one process work.
 """
 
 import logging
 import shutil
+import threading
 from pathlib import Path
+from urllib.parse import urlparse
 
-from spotdl import Spotdl
+from spotdl.download.downloader import Downloader
+from spotdl.utils.search import parse_query
+from spotdl.utils.spotify import SpotifyClient
 
 from app import config
 from app.jobs import Job
@@ -23,6 +33,20 @@ logger = logging.getLogger("yarr.spotify")
 # not supplied SPOTIFY_CLIENT_ID / SPOTIFY_CLIENT_SECRET.
 SPOTDL_DEFAULT_CLIENT_ID = "5f573c9620494bae87890c0f08a60293"
 SPOTDL_DEFAULT_CLIENT_SECRET = "212476d9b0f3472eaa762d90b19b0ba8"
+
+_client_lock = threading.Lock()
+
+
+def _ensure_spotify_client(client_id: str, client_secret: str) -> None:
+    """Initialize spotDL's process-wide Spotify client exactly once."""
+    with _client_lock:
+        if SpotifyClient._instance is None:
+            SpotifyClient.init(
+                client_id=client_id,
+                client_secret=client_secret,
+                no_cache=True,
+                headless=True,
+            )
 
 
 def _progress_callback(job: Job):
@@ -78,7 +102,26 @@ def _song_metadata(song) -> dict:
     }
 
 
-def _build_info(songs, tracks) -> dict:
+def _source_type(url: str) -> str:
+    path = (urlparse(url).path or "").lower()
+    if "/playlist/" in path:
+        return "playlist"
+    if "/album/" in path:
+        return "album"
+    return "track"
+
+
+def _sort_key(song):
+    """Order songs: playlists by list_position, albums by disc/track number."""
+    position = getattr(song, "list_position", None)
+    if position is not None:
+        return (0, 0, position)
+    disc = getattr(song, "disc_number", None) or 0
+    track = getattr(song, "track_number", None) or 0
+    return (1, disc, track)
+
+
+def _build_info(songs, tracks, url) -> dict:
     """Build the compact per-job info dict for single- and multi-track results."""
     if len(tracks) == 1:
         song = songs[0]
@@ -91,7 +134,7 @@ def _build_info(songs, tracks) -> dict:
     first = songs[0]
     return {
         "title": getattr(first, "list_name", None) or getattr(first, "album_name", None) or "",
-        "type": "playlist" if getattr(first, "list_url", None) else "album",
+        "type": _source_type(url),
         "count": len(tracks),
     }
 
@@ -101,7 +144,9 @@ def fetch(job: Job, url: str, staging_dir: Path, quality: str = "192") -> FetchR
 
     settings = {
         "simple_tui": True,
-        "output": str(staging_dir / "{artists} - {title}.{output-ext}"),
+        # The track number makes staging filenames unique per album/playlist so
+        # spotDL cannot collide two tracks that share an artist + title.
+        "output": str(staging_dir / "{track-number} - {artists} - {title}.{output-ext}"),
         "format": "mp3",
         "bitrate": f"{quality}k",
         "threads": 2,
@@ -130,22 +175,25 @@ def fetch(job: Job, url: str, staging_dir: Path, quality: str = "192") -> FetchR
 
     client_id = config.SPOTIFY_CLIENT_ID or SPOTDL_DEFAULT_CLIENT_ID
     client_secret = config.SPOTIFY_CLIENT_SECRET or SPOTDL_DEFAULT_CLIENT_SECRET
+    if bool(config.SPOTIFY_CLIENT_ID) != bool(config.SPOTIFY_CLIENT_SECRET):
+        logger.warning(
+            "Only one of SPOTIFY_CLIENT_ID / SPOTIFY_CLIENT_SECRET is set; "
+            "the missing one falls back to spotDL's bundled default and Spotify "
+            "authentication will likely fail."
+        )
 
     try:
-        spotdl = Spotdl(
-            client_id=client_id,
-            client_secret=client_secret,
-            no_cache=True,
-            headless=True,
-            downloader_settings=settings,
-        )
+        _ensure_spotify_client(client_id, client_secret)
     except Exception as exc:
         raise RuntimeError(f"Could not start the Spotify downloader: {exc}") from exc
 
-    spotdl.downloader.progress_handler.update_callback = _progress_callback(job)
-
     try:
-        songs = spotdl.search([url])
+        songs = parse_query(
+            [url],
+            threads=settings["threads"],
+            playlist_numbering=settings["playlist_numbering"],
+            playlist_retain_track_cover=settings["playlist_retain_track_cover"],
+        )
     except Exception as exc:
         raise RuntimeError(f"Could not look up that Spotify URL: {exc}") from exc
 
@@ -155,11 +203,13 @@ def fetch(job: Job, url: str, staging_dir: Path, quality: str = "192") -> FetchR
             "track, album, or playlist link."
         )
 
-    songs = sorted(songs, key=lambda s: getattr(s, "list_position", 0) or 0)
+    songs.sort(key=_sort_key)
 
     job.stage = f"Downloading {len(songs)} track{'s' if len(songs) != 1 else ''}"
     try:
-        results = spotdl.download_songs(songs)
+        downloader = Downloader(settings=settings)
+        downloader.progress_handler.update_callback = _progress_callback(job)
+        results = downloader.download_multiple_songs(songs)
     except Exception as exc:
         raise RuntimeError(f"Spotify download failed: {exc}") from exc
 
@@ -187,5 +237,5 @@ def fetch(job: Job, url: str, staging_dir: Path, quality: str = "192") -> FetchR
             failures,
         )
 
-    info = _build_info(songs, tracks)
+    info = _build_info(songs, tracks, url)
     return FetchResult(mp3_paths=mp3_paths, info=info, tracks=tracks)
