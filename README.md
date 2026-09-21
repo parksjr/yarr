@@ -1,23 +1,26 @@
 # yarr
 
-Paste a YouTube URL, get an MP3 with editable metadata, and save it into your
-Plex music library with the right `Artist/Album/Track - Title.mp3` folder
-structure. Runs as a Docker container next to your other home-lab apps.
+Paste a YouTube or Spotify link, get MP3s with editable metadata, and save them
+into your Plex music library with the right `Artist/Album/Track - Title.mp3`
+folder structure. Runs as a Docker container next to your other home-lab apps.
 
 ## What it does
 
-1. Downloads the audio from a single YouTube video with `yt-dlp`.
+1. Downloads audio from a single YouTube video with `yt-dlp`, or from a Spotify
+   track, album, or playlist with `spotDL`.
 2. Converts it to MP3 with `ffmpeg` (default 192 kbps).
-3. Embeds the cover art and any metadata YouTube provides.
+3. Embeds the cover art and any metadata the source provides.
 4. Shows you the result so you can fix artist, title, album, year, genre, and
    track number before saving.
-5. Saves the file into your mounted music library. The Artist and Album fields
+5. Saves the files into your mounted music library. The Artist and Album fields
    become the folder names, so typing an existing artist/album reuses that
    folder and typing a new one creates it.
-6. If the video has chapters (for example a long mix where the uploader marked
-   the start of each song), yarr detects them and lets you split the audio into
-   one MP3 per chapter. You can step through each track's metadata form and fix
-   it before saving all of them in one go.
+6. If a YouTube video has chapters (for example a long mix where the uploader
+   marked the start of each song), yarr detects them and lets you split the
+   audio into one MP3 per chapter. You can step through each track's metadata
+   form and fix it before saving all of them in one go.
+7. For a Spotify album or playlist, yarr downloads every track and shows a track
+   list so you can review and edit each song before saving them all.
 
 ## Default port
 
@@ -49,6 +52,7 @@ adjust anything, and click **Save to library**. The file lands under
 | `AUDIO_QUALITY` | `192` | MP3 bitrate in kbps. |
 | `PUID` / `PGID` | `1000` / `1000` | UID/GID used inside the container so files written to the library are owned by you on the host. |
 | `TZ` | `UTC` | Timezone for logs. |
+| `SPOTIFY_CLIENT_ID` / `SPOTIFY_CLIENT_SECRET` | *(empty)* | Optional Spotify API credentials. Leave empty to use spotDL's bundled public credentials (public links work with zero config). |
 
 ## Install on the home lab
 
@@ -95,7 +99,15 @@ To build from source instead, clone the repo and use the included
 
 ## Notes and limits
 
-- One video at a time. Playlists are rejected on purpose.
+- One YouTube video at a time. YouTube playlists are rejected on purpose; paste
+  a single video URL. Spotify albums and playlists ARE supported: every track is
+  downloaded and shown in an editable track list.
+- Spotify uses `spotDL` with its bundled public client id/secret by default, so
+  public track/album/playlist links work with zero configuration. Private or
+  region-restricted links may need your own Spotify app credentials
+  (`SPOTIFY_CLIENT_ID` / `SPOTIFY_CLIENT_SECRET`).
+- spotDL's own default is 128 kbps, but yarr passes `AUDIO_QUALITY` through to
+  it (default 192 kbps), the same as YouTube.
 - Chapter splits are cut with `ffmpeg` stream copy, so they stay at the original
   MP3 quality and finish quickly. The last chapter runs to the end of the video.
 - Some YouTube videos (often long compilations) trigger a bot check. The image

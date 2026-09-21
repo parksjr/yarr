@@ -30,6 +30,10 @@ services:
       # Optional: comma-separated yt-dlp YouTube player clients, e.g.
       # "android,tv,web_embedded". Leave empty to use yt-dlp defaults.
       YTDLP_PLAYER_CLIENTS: ${YTDLP_PLAYER_CLIENTS:-}
+      # Optional: Spotify API credentials. Leave empty to use spotDL's bundled
+      # public client id/secret (zero-config public links).
+      SPOTIFY_CLIENT_ID: ${SPOTIFY_CLIENT_ID:-}
+      SPOTIFY_CLIENT_SECRET: ${SPOTIFY_CLIENT_SECRET:-}
       # Run the app as this uid/gid so new files in /music get the right
       # ownership on the host.
       PUID: ${PUID:-1000}

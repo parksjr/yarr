@@ -1,7 +1,10 @@
-fastapi==0.141.1
-uvicorn[standard]==0.53.0
+# spotDL 4.5.2 pins fastapi<0.104,>=0.103.0 and uvicorn<0.24,>=0.23.2,
+# so yarr pins the spotdl-compatible versions here rather than the latest.
+fastapi==0.103.2
+uvicorn[standard]==0.23.2
 yt-dlp==2026.8.19
 # Provides the JS challenge-solver components yt-dlp needs for YouTube
 # bot-checked videos. Requires a JS runtime (deno is installed in the image).
 yt-dlp-ejs==0.8.0
 mutagen==1.48.1
+spotdl==4.5.2

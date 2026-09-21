@@ -2,14 +2,16 @@
 
 ## What this is
 
-yarr turns a YouTube URL into an MP3 with editable metadata and saves it into a
-Plex music library. FastAPI backend + one vanilla-JS page (no framework, no
-build step). Runs as a Docker container; default port 7734.
+yarr turns a YouTube or Spotify link into MP3s with editable metadata and saves
+them into a Plex music library. FastAPI backend + one vanilla-JS page (no
+framework, no build step). Runs as a Docker container; default port 7734.
 
 ## Where things live
 
 - app/main.py — FastAPI routes and job orchestration (fetch / preview / save)
+- app/source.py — source detection + routing (YouTube / Spotify)
 - app/youtube.py — yt-dlp download (audio -> MP3 + thumbnail)
+- app/spotify.py — spotDL download (Spotify track/album/playlist -> tagged MP3s)
 - app/chapters.py — chapter normalization + ffmpeg stream-copy split
 - app/metadata.py — mutagen ID3 tag read/write + artist/title guessing
 - app/library.py — destination path building + file placement
