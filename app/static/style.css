@@ -118,6 +118,18 @@ button.secondary { background: var(--surface-2); color: var(--text); border: 1px
 .chapters-text { margin: 0; color: var(--text); font-size: 0.9rem; }
 .chapters-actions { display: flex; gap: 10px; flex-wrap: wrap; }
 
+.source-badge {
+  display: inline-block;
+  padding: 3px 10px;
+  margin-bottom: 12px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+.source-badge.spotify { background: #1DB954; color: #06170c; }
+.source-badge.youtube { background: #ff4d4d; color: #1a0404; }
+
 .wizard-bar {
   display: flex;
   align-items: center;

@@ -8,6 +8,7 @@ const progress = $("progress");
 const progressFill = $("progress-fill");
 const progressText = $("progress-text");
 const resultCard = $("result-card");
+const sourceBadge = $("source-badge");
 const chaptersCard = $("chapters-card");
 const chaptersText = $("chapters-text");
 const singleModeButton = $("single-mode-button");
@@ -219,6 +220,19 @@ function setCover(job) {
   setCoverSrc(job.id);
 }
 
+function setSourceBadge(source) {
+  if (source === "spotify" || source === "youtube") {
+    sourceBadge.textContent = source === "spotify" ? "Spotify" : "YouTube";
+    sourceBadge.classList.remove("youtube", "spotify");
+    sourceBadge.classList.add(source);
+    sourceBadge.classList.remove("hidden");
+  } else {
+    sourceBadge.textContent = "";
+    sourceBadge.classList.remove("youtube", "spotify");
+    sourceBadge.classList.add("hidden");
+  }
+}
+
 function showChaptersCard(show) {
   chaptersCard.classList.toggle("hidden", !show);
 }
@@ -228,7 +242,7 @@ function showWizard(show) {
 }
 
 function commitCurrentTrack() {
-  if (mode === "split" && tracks[trackIndex]) {
+  if ((mode === "split" || mode === "tracks") && tracks[trackIndex]) {
     tracks[trackIndex] = currentMeta();
   }
 }
@@ -253,7 +267,7 @@ function syncSharedField(inputId) {
   const cfg = sharedFieldMap[inputId];
   if (!cfg || !$(cfg.applyId).checked) return;
   const value = $(inputId).value.trim();
-  if (mode === "split") {
+  if (mode === "split" || mode === "tracks") {
     for (let i = 0; i < tracks.length; i += 1) {
       tracks[i][cfg.key] = value;
     }
@@ -287,10 +301,11 @@ function setBatchMessage(message, kind) {
 }
 
 function updateModeClasses() {
-  const inSplit = mode === "split";
+  const inSplit = mode === "split" || mode === "tracks";
   const editingTrack = !inSplit && editingBatch !== null;
   addToBatchButton.classList.toggle("hidden", inSplit || editingTrack);
   saveButton.classList.toggle("hidden", editingTrack);
+  backSingle.classList.toggle("hidden", mode === "tracks");
   if (inSplit) {
     saveButton.textContent = `Save ${tracks.length} tracks to library`;
   } else {
@@ -560,6 +575,7 @@ function renderJob(job) {
     fillForm(job.metadata || {});
     if (batchActive) applyBatchDefaults();
     setCover(job);
+    setSourceBadge(job.source);
     resultCard.classList.remove("hidden");
     setError(saveError, "");
     saveSuccess.classList.add("hidden");
@@ -567,7 +583,16 @@ function renderJob(job) {
     setBatchMessage("");
     showWizard(false);
     formHeading.textContent = "Check the metadata";
-    if (job.has_chapters) {
+    if (job.multi_track && Array.isArray(job.tracks) && job.tracks.length > 1) {
+      // Spotify album/playlist: reuse the wizard to review and edit each track.
+      tracks = job.tracks;
+      mode = "tracks";
+      trackIndex = 0;
+      showChaptersCard(false);
+      showWizard(true);
+      formHeading.textContent = `Check each track (${tracks.length} songs)`;
+      showTrack();
+    } else if (job.has_chapters) {
       chaptersText.textContent = `This video has ${chapters.length} chapters. Save it as one track, or split it into ${chapters.length} songs and edit each one before saving.`;
       splitModeButton.textContent = `Split into ${chapters.length} songs`;
       showChaptersCard(true);
@@ -650,9 +675,10 @@ saveForm.addEventListener("submit", async (event) => {
   saveSuccess.classList.add("hidden");
   saveSuccess.textContent = "";
   try {
-    if (mode === "split") {
+    if (mode === "split" || mode === "tracks") {
       commitCurrentTrack();
-      const data = await api(`/api/jobs/${jobId}/save_many`, {
+      const endpoint = mode === "split" ? "save_many" : "save_tracks";
+      const data = await api(`/api/jobs/${jobId}/${endpoint}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ tracks })
