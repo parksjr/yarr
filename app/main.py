@@ -76,15 +76,28 @@ def _run_fetch(job_id: str, url: str) -> None:
     staging = config.STAGING_PATH / job_id
     try:
         src = source.detect(url)
+        job.source = src
         job.stage = f"Contacting {src.title()}"
         result = source.fetch(job, url, staging, config.AUDIO_QUALITY)
-        job.stage = "Reading metadata"
-        mp3 = result.mp3_paths[0]
-        meta = metadata.read_tags(mp3, result.info)
-        job.metadata = meta
-        job.mp3_path = mp3
-        job.staging_dir = str(staging)
         job.info = _info_subset(result.info)
+        if result.tracks:
+            # Spotify: metadata comes from the Song objects, not from re-reading
+            # tags. A single track uses the ordinary single-save flow; multiple
+            # tracks stay in staging until save_tracks moves them.
+            job.track_paths = result.mp3_paths
+            if len(result.tracks) == 1:
+                job.metadata = result.tracks[0]
+                job.mp3_path = result.mp3_paths[0]
+                job.tracks = None
+            else:
+                job.tracks = result.tracks
+                job.mp3_path = result.mp3_paths[0]
+        else:
+            job.stage = "Reading metadata"
+            mp3 = result.mp3_paths[0]
+            job.metadata = metadata.read_tags(mp3, result.info)
+            job.mp3_path = mp3
+        job.staging_dir = str(staging)
         job.chapters = chapters.normalize_chapters(result.chapters, result.info.get("duration"))
         job.progress = 1.0
         job.stage = "Ready"
@@ -179,6 +192,26 @@ def split(job_id: str):
     return {"tracks": tracks}
 
 
+def _save_paths(job, root, src_paths, track_models, cover, missing_message):
+    """Apply metadata and move each track into the library.
+
+    Shared by the chapter-split and Spotify multi-track save flows. The caller
+    validates path counts up front; files move one at a time, so a mid-way
+    failure can still leave earlier tracks saved.
+    """
+    saved = []
+    for i, (src_path, track) in enumerate(zip(src_paths, track_models)):
+        job.stage = f"Saving track {i + 1} of {len(src_paths)}"
+        src = Path(src_path)
+        if not src.exists():
+            raise RuntimeError(f"Track {i + 1} is missing. {missing_message}")
+        meta = track.model_dump()
+        metadata.apply_metadata(str(src), meta, cover=cover)
+        dest = library.place_file(src, root, meta)
+        saved.append({"path": str(dest), "relative": str(dest.relative_to(root))})
+    return saved
+
+
 @app.post("/api/jobs/{job_id}/save_many")
 def save_many(job_id: str, req: SaveManyRequest):
     job = store.get(job_id)
@@ -194,17 +227,40 @@ def save_many(job_id: str, req: SaveManyRequest):
     cover = metadata.read_cover(job.mp3_path) if job.mp3_path else None
     job.status = "saving"
     job.stage = "Saving tracks"
-    saved = []
     try:
-        for i, track in enumerate(req.tracks):
-            job.stage = f"Saving track {i + 1} of {len(req.tracks)}"
-            src = Path(job.split_paths[i])
-            if not src.exists():
-                raise RuntimeError(f"Track {i + 1} is missing. Split the video again.")
-            meta = track.model_dump()
-            metadata.apply_metadata(str(src), meta, cover=cover)
-            dest = library.place_file(src, root, meta)
-            saved.append({"path": str(dest), "relative": str(dest.relative_to(root))})
+        saved = _save_paths(
+            job, root, job.split_paths, req.tracks, cover, "Split the video again."
+        )
+        job.status = "saved"
+        job.stage = "Saved"
+        if job.staging_dir and os.path.isdir(job.staging_dir):
+            shutil.rmtree(job.staging_dir, ignore_errors=True)
+        return {"status": "saved", "tracks": saved}
+    except Exception as exc:
+        job.status = "save_error"
+        job.stage = "Save failed"
+        job.error = str(exc)
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.post("/api/jobs/{job_id}/save_tracks")
+def save_tracks(job_id: str, req: SaveManyRequest):
+    job = store.get(job_id)
+    if job is None or job.status not in ("done", "save_error"):
+        raise HTTPException(status_code=400, detail="There is nothing ready to save. Fetch a link first.")
+    if not req.tracks:
+        raise HTTPException(status_code=400, detail="No tracks to save.")
+    if not job.track_paths or len(job.track_paths) != len(req.tracks):
+        raise HTTPException(status_code=400, detail="This download does not have that many tracks. Fetch it again.")
+    root = config.MUSIC_LIBRARY_PATH.resolve()
+    if not root.exists():
+        root.mkdir(parents=True, exist_ok=True)
+    job.status = "saving"
+    job.stage = "Saving tracks"
+    try:
+        # cover=None: each Spotify MP3 already carries its own embedded art, so
+        # we must not overwrite per-track covers with the first track's cover.
+        saved = _save_paths(job, root, job.track_paths, req.tracks, None, "Fetch it again.")
         job.status = "saved"
         job.stage = "Saved"
         if job.staging_dir and os.path.isdir(job.staging_dir):
