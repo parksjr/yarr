@@ -9,7 +9,7 @@ from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from app import chapters, config, jobs, library, metadata, youtube
+from app import chapters, config, jobs, library, metadata, source
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -50,25 +50,38 @@ class BatchSaveRequest(BaseModel):
     tracks: list[BatchTrackRequest]
 
 
+def _info_subset(info: dict) -> dict:
+    """Whitelist the info fields we expose on a job.
+
+    YouTube jobs keep the same keys as before; ``source`` records which
+    downloader produced the result.
+    """
+    subset = {
+        k: info.get(k)
+        for k in ("id", "title", "uploader", "channel", "webpage_url", "duration", "thumbnail")
+    }
+    subset["source"] = info.get("source")
+    return subset
+
+
 def _run_fetch(job_id: str, url: str) -> None:
     job = store.get(job_id)
     if job is None:
         return
     job.status = "running"
-    job.stage = "Contacting YouTube"
     staging = config.STAGING_PATH / job_id
     try:
-        info, mp3 = youtube.download(job, url, staging, config.AUDIO_QUALITY)
+        src = source.detect(url)
+        job.stage = f"Contacting {src.title()}"
+        result = source.fetch(job, url, staging, config.AUDIO_QUALITY)
         job.stage = "Reading metadata"
-        meta = metadata.read_tags(mp3, info)
+        mp3 = result.mp3_paths[0]
+        meta = metadata.read_tags(mp3, result.info)
         job.metadata = meta
         job.mp3_path = mp3
         job.staging_dir = str(staging)
-        job.info = {
-            k: info.get(k)
-            for k in ("id", "title", "uploader", "channel", "webpage_url", "duration", "thumbnail")
-        }
-        job.chapters = chapters.normalize_chapters(info.get("chapters"), info.get("duration"))
+        job.info = _info_subset(result.info)
+        job.chapters = chapters.normalize_chapters(result.chapters, result.info.get("duration"))
         job.progress = 1.0
         job.stage = "Ready"
         job.status = "done"

@@ -24,7 +24,7 @@ def _progress_hook(job: Job, data: dict) -> None:
         job.stage = "Converting to MP3"
 
 
-def download(job: Job, url: str, staging_dir: Path, quality: str = "192"):
+def fetch(job: Job, url: str, staging_dir: Path, quality: str = "192"):
     staging_dir.mkdir(parents=True, exist_ok=True)
     opts = {
         "format": "bestaudio/best",
@@ -82,7 +82,11 @@ def download(job: Job, url: str, staging_dir: Path, quality: str = "192"):
     mp3 = _find_mp3(staging_dir)
     if mp3 is None:
         raise RuntimeError("The download finished but no MP3 file was produced.")
-    return info, mp3
+    # Imported lazily here to avoid a circular import (app.source imports this
+    # module at startup).
+    from app.source import FetchResult
+
+    return FetchResult(mp3_paths=[mp3], info=info, chapters=info.get("chapters"))
 
 
 def _find_mp3(staging_dir: Path):
