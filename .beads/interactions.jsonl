@@ -1,0 +1,1 @@
+{"id":"int-5a82e7bf2bef4874d713c57779a6a54c","kind":"field_change","created_at":"2026-09-21T14:09:43.613028Z","actor":"Mike Parks","issue_id":"yarr-y1s.1.1","extra":{"field":"status","new_value":"closed","old_value":"open","reason":"Completed 2026-09-21: chose spotDL as primary backend (26k stars, MIT, reuses yt-dlp/FFmpeg/Deno); Zotify recorded as future direct-rip option."}}
