@@ -12,3 +12,9 @@ HOST = os.environ.get("HOST", "0.0.0.0")
 YTDLP_COOKIEFILE = os.environ.get("YTDLP_COOKIEFILE", "/cookies.txt")
 # Optional comma-separated yt-dlp YouTube player clients, e.g. "android,tv".
 YTDLP_PLAYER_CLIENTS = os.environ.get("YTDLP_PLAYER_CLIENTS", "")
+
+# Optional Spotify API credentials. When unset, spotDL uses its bundled public
+# client id/secret, which resolves public links with zero configuration. Set
+# both to use your own app credentials (needed for some private links).
+SPOTIFY_CLIENT_ID = os.environ.get("SPOTIFY_CLIENT_ID", "")
+SPOTIFY_CLIENT_SECRET = os.environ.get("SPOTIFY_CLIENT_SECRET", "")
