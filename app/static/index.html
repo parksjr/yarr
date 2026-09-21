@@ -3,22 +3,22 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>yarr — YouTube to Plex music</title>
+  <title>yarr — YouTube or Spotify to Plex music</title>
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
   <header class="topbar">
     <div class="brand"><span class="logo">♫</span><span>yarr</span></div>
-    <p class="tagline">YouTube → MP3 → your Plex music library</p>
+    <p class="tagline">YouTube or Spotify → MP3 → your Plex music library</p>
   </header>
 
   <main>
     <section class="card" id="fetch-card">
       <h1 id="fetch-heading">Add a song</h1>
-      <p class="hint">Paste a single YouTube video URL. The audio is downloaded as an MP3 and the metadata is pulled from the video so you can check and fix it before saving.</p>
+      <p class="hint">Paste a YouTube or Spotify link. The audio is downloaded as an MP3 and the metadata is pulled so you can check and fix it before saving.</p>
       <form id="fetch-form" class="row">
-        <input id="url-input" type="url" placeholder="https://www.youtube.com/watch?v=…" autocomplete="off" required>
+        <input id="url-input" type="url" placeholder="https://www.youtube.com/watch?v=… or https://open.spotify.com/track/…" autocomplete="off" required>
         <button id="fetch-button" type="submit">Fetch</button>
       </form>
       <div id="fetch-error" class="error hidden" role="alert"></div>

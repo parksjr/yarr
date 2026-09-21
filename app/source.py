@@ -32,7 +32,11 @@ def detect(url: str) -> str:
     host = (urlparse(url).hostname or "").lower()
     if host == "youtu.be" or host == "youtube.com" or host.endswith(".youtube.com"):
         return "youtube"
-    raise ValueError("Enter a YouTube URL.")
+    if host == "open.spotify.com" or host.endswith(".spotify.com"):
+        path = (urlparse(url).path or "").lower()
+        if "/track/" in path or "/album/" in path or "/playlist/" in path:
+            return "spotify"
+    raise ValueError("Enter a YouTube or Spotify URL.")
 
 
 def fetch(job: Job, url: str, staging_dir: Path, quality: str) -> FetchResult:
@@ -40,6 +44,12 @@ def fetch(job: Job, url: str, staging_dir: Path, quality: str) -> FetchResult:
     src = detect(url)
     if src == "youtube":
         result = youtube.fetch(job, url, staging_dir, quality)
+    elif src == "spotify":
+        # Lazy import: spotDL (and its heavy dependency tree) must not load at
+        # app startup, only when a Spotify URL is actually fetched.
+        from app import spotify
+
+        result = spotify.fetch(job, url, staging_dir, quality)
     else:
         raise ValueError(f"Unsupported source: {src}")
     result.info["source"] = src

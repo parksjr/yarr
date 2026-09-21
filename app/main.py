@@ -54,13 +54,17 @@ def _info_subset(info: dict) -> dict:
     """Whitelist the info fields we expose on a job.
 
     YouTube jobs keep the same keys as before; ``source`` records which
-    downloader produced the result.
+    downloader produced the result, and Spotify's extra keys are included when
+    present.
     """
     subset = {
         k: info.get(k)
         for k in ("id", "title", "uploader", "channel", "webpage_url", "duration", "thumbnail")
     }
     subset["source"] = info.get("source")
+    for k in ("artist", "album", "cover_url", "type", "count"):
+        if info.get(k) is not None:
+            subset[k] = info[k]
     return subset
 
 
@@ -110,7 +114,7 @@ def health():
 def fetch(req: FetchRequest):
     url = req.url.strip()
     if not url:
-        raise HTTPException(status_code=400, detail="Enter a YouTube URL.")
+        raise HTTPException(status_code=400, detail="Enter a YouTube or Spotify URL.")
     job = store.create(url)
     threading.Thread(target=_run_fetch, args=(job.id, url), daemon=True).start()
     return {"job_id": job.id}
