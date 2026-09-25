@@ -1,6 +1,7 @@
 import os
 import shutil
 import threading
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -22,6 +23,10 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(title="yarr", version="0.1.0", lifespan=lifespan)
 store = jobs.JobStore()
+
+
+class CancelRequest(BaseModel):
+    reason: str = ""
 
 
 class FetchRequest(BaseModel):
@@ -81,6 +86,8 @@ def _run_fetch(job_id: str, url: str) -> None:
     job.status = "running"
     staging = config.STAGING_PATH / job_id
     try:
+        if job.cancel_event.is_set():
+            raise jobs.JobCancelled()
         src = source.detect(url)
         job.source = src
         job.stage = f"Contacting {_SOURCE_LABELS.get(src, src)}"
@@ -105,13 +112,32 @@ def _run_fetch(job_id: str, url: str) -> None:
             job.mp3_path = mp3
         job.staging_dir = str(staging)
         job.chapters = chapters.normalize_chapters(result.chapters, result.info.get("duration"))
+        if job.cancel_event.is_set():
+            raise jobs.JobCancelled()
         job.progress = 1.0
         job.stage = "Ready"
         job.status = "done"
+    except jobs.JobCancelled:
+        # The user aborted (or asked to abort) a fetch that was still starting
+        # up. Leave the status/error text to the cancel endpoint when it already
+        # reported the cancel, and clean the staging dir here too so the partial
+        # download goes away as soon as this thread lets go of it.
+        if job.status != "cancelled":
+            job.status = "cancelled"
+            job.stage = "Cancelled"
+            job.error = "Cancelled by you."
+            job.progress = 0.0
+        job.clear_result()
+        job.clean_staging()
     except Exception as exc:
+        if job.status == "cancelled":
+            # The cancel endpoint got there first; keep its status and message.
+            job.clean_staging()
+            return
         job.status = "error"
         job.stage = "Failed"
         job.error = str(exc)
+        job.clean_staging()
 
 
 @app.get("/")
@@ -137,6 +163,56 @@ def fetch(req: FetchRequest):
     job = store.create(url)
     threading.Thread(target=_run_fetch, args=(job.id, url), daemon=True).start()
     return {"job_id": job.id}
+
+
+def _cleanup_after_cancel(job) -> None:
+    """Delete a cancelled job's staging dir, retrying once the worker stops.
+
+    The worker holds its downloaded files open until its download call unwinds,
+    and Docker Desktop for macOS lets such a file survive a delete (it reappears
+    when the handle closes). So try immediately, then once more a moment later.
+    """
+    job.clean_staging()
+    if not os.path.isdir(job.staging_dir_path()):
+        return
+
+    def retry() -> None:
+        for _ in range(40):  # about 4 s
+            time.sleep(0.1)
+            job.clean_staging()
+            if not os.path.isdir(job.staging_dir_path()):
+                return
+
+    threading.Thread(target=retry, daemon=True).start()
+
+
+@app.post("/api/jobs/{job_id}/cancel")
+def cancel_job(job_id: str, req: CancelRequest | None = None):
+    """Abort an in-flight fetch and clean up after it.
+
+    ``job.cancel()`` stops the running downloader: its hooks raise as soon as
+    they see the cancel, and the downloader-side abort handle (see
+    ``app.abort``) interrupts the read loop so no subprocess is left working.
+    The job is marked cancelled and its result cleared right away, so the user
+    gets a clean slate and nothing from the aborted fetch can be saved. The
+    staging directory is then removed (repeatedly if needed, because the worker
+    thread may still hold the files open for a moment).
+    """
+    job = store.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found.")
+
+    note = (req.reason if req else "") or "Cancelled by you."
+    job.cancel()
+    job.status = "cancelled"
+    job.stage = "Cancelled"
+    job.error = note
+    job.progress = 0.0
+    # Drop the result: a cancelled fetch must not be previewable or savable,
+    # even if the worker thread finishes its download before it notices.
+    job.clear_result()
+    _cleanup_after_cancel(job)
+    return {"status": "cancelled", "message": note}
 
 
 @app.get("/api/jobs/{job_id}")
@@ -193,7 +269,12 @@ def split(job_id: str):
         raise HTTPException(status_code=400, detail="The MP3 file is missing. Fetch the video again.")
     if not job.split_paths:
         split_dir = Path(job.staging_dir) / "split"
-        job.split_paths = chapters.split_mp3_by_chapters(job.mp3_path, job.chapters, split_dir)
+        try:
+            job.split_paths = chapters.split_mp3_by_chapters(
+                job.mp3_path, job.chapters, split_dir, job
+            )
+        except jobs.JobCancelled:
+            raise HTTPException(status_code=400, detail="The split was cancelled.") from None
     tracks = metadata.chapter_tracks(job.chapters, job.info, job.metadata)
     return {"tracks": tracks}
 
@@ -214,15 +295,24 @@ def _save_paths(job, root, src_paths, track_models, cover, missing_message):
         meta = track.model_dump()
         metadata.apply_metadata(str(src), meta, cover=cover)
         dest = library.place_file(src, root, meta)
-        saved.append({"path": str(dest), "relative": str(dest.relative_to(root))})
+        relative = str(dest.relative_to(root))
+        saved.append({
+            "path": str(dest),
+            "relative": relative,
+            "folder": relative.rsplit("/", 1)[0] if "/" in relative else "",
+            "title": meta.get("title") or "",
+            "artist": meta.get("artist") or "",
+        })
     return saved
 
 
 @app.post("/api/jobs/{job_id}/save_many")
 def save_many(job_id: str, req: SaveManyRequest):
     job = store.get(job_id)
-    if job is None or job.status not in ("done", "save_error"):
-        raise HTTPException(status_code=400, detail="There is nothing ready to save. Fetch a video first.")
+    if job is None or job.status == "cancelled":
+        raise HTTPException(status_code=400, detail="This download was cancelled.")
+    if job.status not in ("done", "save_error"):
+        raise HTTPException(status_code=400, detail="There is nothing ready to save. Fetch it first.")
     if not req.tracks:
         raise HTTPException(status_code=400, detail="No tracks to save.")
     if not job.split_paths or len(job.split_paths) != len(req.tracks):
@@ -252,8 +342,10 @@ def save_many(job_id: str, req: SaveManyRequest):
 @app.post("/api/jobs/{job_id}/save_tracks")
 def save_tracks(job_id: str, req: SaveManyRequest):
     job = store.get(job_id)
-    if job is None or job.status not in ("done", "save_error"):
-        raise HTTPException(status_code=400, detail="There is nothing ready to save. Fetch a link first.")
+    if job is None or job.status == "cancelled":
+        raise HTTPException(status_code=400, detail="This download was cancelled.")
+    if job.status not in ("done", "save_error"):
+        raise HTTPException(status_code=400, detail="There is nothing ready to save. Fetch it first.")
     if not req.tracks:
         raise HTTPException(status_code=400, detail="No tracks to save.")
     if not job.track_paths or len(job.track_paths) != len(req.tracks):
@@ -292,7 +384,9 @@ def batch_save(req: BatchSaveRequest):
     jobs = []
     for i, track in enumerate(req.tracks):
         job = store.get(track.job_id)
-        if job is None or job.status not in ("done", "save_error"):
+        if job is None or job.status == "cancelled":
+            raise HTTPException(status_code=400, detail=f"Song {i + 1} was cancelled. Fetch it again.")
+        if job.status not in ("done", "save_error"):
             raise HTTPException(status_code=400, detail=f"Song {i + 1} is not ready to save. Fetch it again.")
         if not job.mp3_path or not os.path.exists(job.mp3_path):
             raise HTTPException(status_code=400, detail=f"Song {i + 1} is missing its audio file. Fetch it again.")
@@ -300,10 +394,29 @@ def batch_save(req: BatchSaveRequest):
 
     saved = []
     for i, (track, job) in enumerate(zip(req.tracks, jobs)):
+        # One song per job, saved on its own. Each track keeps its own
+        # artist/album metadata, so a batch of unrelated songs is expected.
         meta = track.model_dump(exclude={"job_id"})
-        metadata.apply_metadata(job.mp3_path, meta)
-        dest = library.place_file(Path(job.mp3_path), root, meta)
-        saved.append({"path": str(dest), "relative": str(dest.relative_to(root))})
+        label = meta.get("title") or f"song {i + 1}"
+        try:
+            metadata.apply_metadata(job.mp3_path, meta)
+            dest = library.place_file(Path(job.mp3_path), root, meta)
+        except Exception as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Save stopped at song {i + 1} of {len(req.tracks)} ({label}): {exc} "
+                    f"The {len(saved)} song(s) saved before it are already in the library."
+                ),
+            ) from exc
+        relative = str(dest.relative_to(root))
+        saved.append({
+            "path": str(dest),
+            "relative": relative,
+            "folder": relative.rsplit("/", 1)[0] if "/" in relative else "",
+            "title": meta.get("title") or "",
+            "artist": meta.get("artist") or "",
+        })
         job.status = "saved"
         job.stage = "Saved"
         if job.staging_dir and os.path.isdir(job.staging_dir):

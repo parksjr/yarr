@@ -13,6 +13,9 @@ asyncio loop) for every fetch, so repeated and concurrent Spotify fetches in
 one process work.
 """
 
+import asyncio
+import contextlib
+import functools
 import logging
 import shutil
 import threading
@@ -23,8 +26,8 @@ from spotdl.download.downloader import Downloader
 from spotdl.utils.search import parse_query
 from spotdl.utils.spotify import SpotifyClient
 
-from app import config
-from app.jobs import Job
+from app import abort, config
+from app.jobs import Job, JobAborted, JobCancelled
 from app.source import FetchResult
 
 logger = logging.getLogger("yarr.spotify")
@@ -35,6 +38,8 @@ SPOTDL_DEFAULT_CLIENT_ID = "5f573c9620494bae87890c0f08a60293"
 SPOTDL_DEFAULT_CLIENT_SECRET = "212476d9b0f3472eaa762d90b19b0ba8"
 
 _client_lock = threading.Lock()
+# Serializes the YoutubeDL class patch in ``_ytdlp_abort_hook``.
+_patch_lock = threading.Lock()
 
 
 def _ensure_spotify_client(client_id: str, client_secret: str) -> None:
@@ -49,10 +54,91 @@ def _ensure_spotify_client(client_id: str, client_secret: str) -> None:
             )
 
 
-def _progress_callback(job: Job):
-    """Build a spotDL progress callback that updates the shared Job state."""
+def _cancel_tasks(downloader, live_tasks) -> None:
+    """Cancel every running spotDL download task.
 
-    def callback(tracker, message: str) -> None:
+    spotDL gathers all per-song coroutines into one ``asyncio.gather`` call, so
+    cancelling the gathered tasks unwinds the whole album download instead of
+    just the current track. Called from the progress callback, which runs inside
+    spotDL's own event loop, so touching its task set is safe there.
+    """
+    try:
+        tasks = [t for t in list(live_tasks) if not t.done()]
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            # Let the cancellations take effect before the loop stops.
+            downloader.loop.run_until_complete(
+                asyncio.gather(*tasks, return_exceptions=True)
+            )
+    except Exception:
+        # Cancellation is best effort; the armed hook already aborts the track.
+        logger.debug("Could not cancel spotDL tasks cleanly", exc_info=True)
+
+
+def _download_multiple_songs(downloader, live_tasks, songs):
+    """``Downloader.download_multiple_songs`` with task tracking.
+
+    ``asyncio.gather`` turns the coroutines into tasks once it runs, which is
+    too late to cancel them by hand. The tasks are therefore created (and
+    registered) inside the loop first and removed as they finish, so a cancel
+    request can stop the downloads that are still in flight. Everything else
+    mirrors spotDL: every song is pooled in parallel, limited by its semaphore.
+    """
+    tasks = []
+
+    async def run() -> list:
+        tasks.extend(asyncio.ensure_future(downloader.pool_download(song)) for song in songs)
+        for task in tasks:
+            live_tasks.add(task)
+            task.add_done_callback(live_tasks.discard)
+        return list(await asyncio.gather(*tasks))
+
+    return downloader.loop.run_until_complete(run())
+
+
+@contextlib.contextmanager
+def _ytdlp_abort_hook(cancel):
+    """Make every ``YoutubeDL`` spotDL creates install ``cancel`` as a hook.
+
+    spotDL's audio providers build their ``YoutubeDL`` objects on the fly, so
+    the hook cannot be attached to an existing instance. The provider module's
+    ``YoutubeDL`` name is patched for the duration of the fetch and restored
+    afterwards. Only one fetch patches at a time (guarded by a lock), so
+    concurrent Spotify fetches cannot see each other's hook.
+    """
+    with _patch_lock:
+        from spotdl.providers.audio import base as audio_base
+
+        original = audio_base.YoutubeDL
+
+        class AbortableYoutubeDL(original):  # type: ignore[misc, valid-type]
+            def __init__(self, params=None, *args, **kwargs):
+                super().__init__(params, *args, **kwargs)
+                self.add_progress_hook(cancel)
+
+        audio_base.YoutubeDL = AbortableYoutubeDL
+        try:
+            yield
+        finally:
+            audio_base.YoutubeDL = original
+
+
+def _progress_callback(job: Job, cancel, cancel_tasks):
+    """Build a spotDL progress callback that updates the shared Job state.
+
+    The first call is the cancellation path: spotDL fires this callback on every
+    progress tick, so an armed cancel stops the current track at once.
+    ``cancel_tasks`` also cancels spotDL's remaining asyncio tasks before the
+    raise, because spotDL catches every exception per song: raising from the
+    callback alone would only stop the one track and continue with the next.
+    """
+
+    def callback(tracker, message: str) -> bool:
+        if job.cancel_event.is_set():
+            cancel()
+            cancel_tasks()
+            raise JobAborted("spotify fetch aborted")
         try:
             song = getattr(tracker, "song", None)
             position = getattr(song, "list_position", None)
@@ -63,9 +149,12 @@ def _progress_callback(job: Job):
             progress = getattr(tracker, "progress", 0) or 0
             job.progress = round(min(0.95, max(0.0, progress / 100.0)), 3)
             job.stage = f"Downloading {prefix}{message or 'working'}"
+        except JobAborted:
+            raise
         except Exception:
             # Progress reporting must never break the download worker.
             pass
+        return True
 
     return callback
 
@@ -162,6 +251,7 @@ def _build_info(songs, tracks, url) -> dict:
 
 def fetch(job: Job, url: str, staging_dir: Path, quality: str = "192") -> FetchResult:
     staging_dir.mkdir(parents=True, exist_ok=True)
+    cancel = abort.armed_abort(job.cancel_event, "spotify fetch aborted")
 
     settings = {
         "simple_tui": True,
@@ -218,6 +308,9 @@ def fetch(job: Job, url: str, staging_dir: Path, quality: str = "192") -> FetchR
     except Exception as exc:
         raise RuntimeError(f"Could not look up that Spotify URL: {exc}") from exc
 
+    if job.cancel_event.is_set():
+        raise JobCancelled()
+
     if not songs:
         raise RuntimeError(
             "No tracks were found at that Spotify URL. Check that it is a public "
@@ -226,13 +319,45 @@ def fetch(job: Job, url: str, staging_dir: Path, quality: str = "192") -> FetchR
 
     songs.sort(key=_sort_key)
 
+    if job.cancel_event.is_set():
+        raise JobCancelled()
+
     job.stage = f"Downloading {len(songs)} track{'s' if len(songs) != 1 else ''}"
+    downloader = Downloader(settings=settings)
+    # spotDL 4.5 has no public abort API, so cancellation needs three parts.
+    #
+    # 1. The yt-dlp download spotDL runs. spotDL builds a fresh ``YoutubeDL``
+    #    inside each audio provider for every download, so adding a hook to the
+    #    handler up front does nothing (that object is replaced). Instead the
+    #    provider's ``YoutubeDL`` class is replaced for the duration of this
+    #    fetch with a subclass that installs the abort hook in ``__init__``.
+    # 2. The tracked asyncio tasks below, which stop the rest of the album.
+    # 3. The progress callback, which is spotDL's own per-song tick.
+    #
+    # ``cancel`` (``app.abort``) is the flag: it reads as True and raises once
+    # the user has asked to cancel, so every hook that shares it aborts its
+    # download mid-file.
+    live_tasks: set = set()
+    downloader.progress_handler.update_callback = _progress_callback(
+        job, cancel, lambda: _cancel_tasks(downloader, live_tasks)
+    )
+    downloader.download_multiple_songs = functools.partial(
+        _download_multiple_songs, downloader, live_tasks
+    )
     try:
-        downloader = Downloader(settings=settings)
-        downloader.progress_handler.update_callback = _progress_callback(job)
-        results = downloader.download_multiple_songs(songs)
+        with _ytdlp_abort_hook(cancel):
+            results = downloader.download_multiple_songs(songs)
+    except JobAborted as exc:
+        raise JobCancelled() from exc
+    except JobCancelled:
+        raise
     except Exception as exc:
+        if job.cancel_event.is_set():
+            raise JobCancelled() from exc
         raise RuntimeError(f"Spotify download failed: {exc}") from exc
+
+    if job.cancel_event.is_set():
+        raise JobCancelled()
 
     spotdl_errors = _clean_spotdl_errors(getattr(downloader, "errors", None))
 

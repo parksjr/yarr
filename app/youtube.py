@@ -5,13 +5,18 @@ from pathlib import Path
 import yt_dlp
 from yt_dlp.utils import DownloadError
 
-from app import config
-from app.jobs import Job
+from app import abort, config
+from app.jobs import Job, JobAborted, JobCancelled
 
 logger = logging.getLogger("yarr.youtube")
 
 
-def _progress_hook(job: Job, data: dict) -> None:
+def _progress_hook(job: Job, cancel, data: dict) -> None:
+    # yt-dlp calls a progress hook often (once per downloaded block) and always
+    # once more after each postprocessor, so this is the hook that stops the
+    # download promptly, even while a subprocess such as ffmpeg is running.
+    # ``cancel`` raises once the user has asked to cancel.
+    cancel()
     status = data.get("status")
     if status == "downloading":
         total = data.get("total_bytes") or data.get("total_bytes_estimate") or 0
@@ -24,8 +29,15 @@ def _progress_hook(job: Job, data: dict) -> None:
         job.stage = "Converting to MP3"
 
 
+def _postprocessor_hook(cancel) -> None:
+    # Covers a cancel that arrives between progress hooks, for example while a
+    # postprocessor is running.
+    cancel()
+
+
 def fetch(job: Job, url: str, staging_dir: Path, quality: str = "192"):
     staging_dir.mkdir(parents=True, exist_ok=True)
+    cancel = abort.armed_abort(job.cancel_event, "youtube fetch aborted")
     opts = {
         "format": "bestaudio/best",
         "outtmpl": str(staging_dir / "%(id)s.%(ext)s"),
@@ -36,7 +48,11 @@ def fetch(job: Job, url: str, staging_dir: Path, quality: str = "192"):
         "writethumbnail": True,
         "retries": 2,
         "fragment_retries": 2,
-        "progress_hooks": [lambda d: _progress_hook(job, d)],
+        # The bare ``cancel`` object is yt-dlp's preferred abort hook: its own
+        # progress wrapper calls it and turns the failure into a stopped
+        # download. The job's progress hook sits behind it.
+        "progress_hooks": [cancel, lambda d: _progress_hook(job, cancel, d)],
+        "postprocessor_hooks": [lambda d: _postprocessor_hook(cancel)],
         "postprocessors": [
             {"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": str(quality)},
             {"key": "FFmpegMetadata"},
@@ -62,10 +78,19 @@ def fetch(job: Job, url: str, staging_dir: Path, quality: str = "192"):
         clients = [c.strip() for c in config.YTDLP_PLAYER_CLIENTS.split(",") if c.strip()]
         if clients:
             opts["extractor_args"] = {"youtube": {"player_client": clients}}
+    if job.cancel_event.is_set():
+        raise JobCancelled()
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=True)
+    except (JobAborted, JobCancelled) as exc:
+        # The hook stop signal: yt-dlp reports the exception the hook raised.
+        raise JobCancelled() from exc
     except DownloadError as exc:
+        if job.cancel_event.is_set():
+            # Belt and braces: anything else yt-dlp reports while a cancel is
+            # pending is really the cancel, so report it as such.
+            raise JobCancelled() from exc
         message = str(exc)
         if "403" in message or "Forbidden" in message:
             raise RuntimeError(
@@ -75,6 +100,8 @@ def fetch(job: Job, url: str, staging_dir: Path, quality: str = "192"):
                 "cookies file via the YTDLP_COOKIEFILE environment variable."
             ) from exc
         raise RuntimeError(message) from exc
+    if job.cancel_event.is_set():
+        raise JobCancelled()
     if not info:
         raise RuntimeError("Could not read that URL. Check that it is a valid YouTube link.")
     if info.get("_type") in ("playlist", "multi_video"):

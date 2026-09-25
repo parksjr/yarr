@@ -95,7 +95,35 @@ button.secondary { background: var(--surface-2); color: var(--text); border: 1px
   border-radius: 999px;
   transition: width 0.3s ease;
 }
-.progress-text { color: var(--muted); font-size: 0.85rem; margin: 8px 0 0; }
+.progress-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+.progress-text { color: var(--muted); font-size: 0.85rem; margin: 0; }
+button.danger {
+  background: transparent;
+  color: var(--danger);
+  border: 1px solid var(--danger);
+  padding: 6px 14px;
+  font-size: 0.85rem;
+}
+button.danger:hover { background: rgba(248, 113, 113, 0.12); filter: none; }
+
+.saved-list {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.saved-list li { font-size: 0.9rem; }
+.saved-folder { color: var(--accent); font-weight: 700; }
+.saved-count { color: var(--muted); }
 
 .chapters-card {
   display: flex;

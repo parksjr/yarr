@@ -8,6 +8,7 @@ const fetchSuccess = $("fetch-success");
 const progress = $("progress");
 const progressFill = $("progress-fill");
 const progressText = $("progress-text");
+const cancelButton = $("cancel-button");
 const resultCard = $("result-card");
 const sourceBadge = $("source-badge");
 const chaptersCard = $("chapters-card");
@@ -38,11 +39,15 @@ const batchList = $("batch-list");
 const batchSaveButton = $("batch-save-button");
 const batchClearButton = $("batch-clear-button");
 const batchMessage = $("batch-message");
+const savedCard = $("saved-card");
+const savedHeading = $("saved-heading");
+const savedList = $("saved-list");
 
 let jobId = null;
 let currentJob = null;
 let pollTimer = null;
 let previewTimer = null;
+let cancelling = false;
 let mode = "single";
 let tracks = [];
 let trackIndex = 0;
@@ -113,6 +118,63 @@ function setProgress(value, text) {
   const pct = Math.max(0, Math.min(1, value || 0)) * 100;
   progressFill.style.width = `${pct}%`;
   progressText.textContent = text || "Working…";
+}
+
+function setCancelling(on) {
+  cancelling = on;
+  cancelButton.disabled = on;
+  cancelButton.textContent = on ? "Cancelling…" : "Cancel";
+}
+
+// The success card. The old one-line message lived in the save card, which the
+// batch flow hides right after a save; this card is cleared whenever a new job
+// appears, so a finished save stays readable.
+function setSavedCard(items) {
+  if (!items || !items.length) {
+    savedCard.classList.add("hidden");
+    savedList.innerHTML = "";
+    savedHeading.textContent = "Saved";
+    return;
+  }
+  const folders = [...new Set(items.map((i) => i.folder).filter(Boolean))];
+  const artists = [...new Set(items.map((i) => i.artist).filter(Boolean))];
+  const noun = items.length === 1 ? "song" : "songs";
+  if (folders.length === 1) {
+    savedHeading.textContent = `Saved ${items.length} ${noun} to ${folders[0]}/`;
+  } else if (folders.length > 1) {
+    savedHeading.textContent = `Saved ${items.length} ${noun} to ${folders.length} folders`;
+  } else {
+    savedHeading.textContent = `Saved ${items.length} ${noun}`;
+  }
+  savedList.innerHTML = "";
+  if (folders.length <= 1) {
+    savedCard.classList.remove("hidden");
+    return;
+  }
+  // More than one destination: group the songs by folder so it is obvious that
+  // each song went to its own artist/album folder.
+  for (const folder of folders) {
+    const inFolder = items.filter((i) => i.folder === folder);
+    const li = document.createElement("li");
+    const name = document.createElement("span");
+    name.className = "saved-folder";
+    name.textContent = `${folder}/`;
+    li.appendChild(name);
+    const count = document.createElement("span");
+    count.className = "saved-count";
+    count.textContent = ` — ${inFolder.length} song${inFolder.length === 1 ? "" : "s"}`;
+    li.appendChild(count);
+    savedList.appendChild(li);
+    if (artists.length > 1) {
+      for (const item of inFolder) {
+        const sub = document.createElement("li");
+        sub.className = "saved-count";
+        sub.textContent = `• ${item.title || "(untitled)"}`;
+        savedList.appendChild(sub);
+      }
+    }
+  }
+  savedCard.classList.remove("hidden");
 }
 
 function formatTime(seconds) {
@@ -315,7 +377,7 @@ function setBatchMessage(message, kind) {
 // input, and any error/success text so the next fetch starts clean. The batch
 // queue is intentionally left alone here; callers that save the queue clear it
 // themselves first.
-function resetAfterSave(message) {
+function resetAfterSave() {
   jobId = null;
   currentJob = null;
   chapters = [];
@@ -336,10 +398,48 @@ function resetAfterSave(message) {
   pathPreview.textContent = "—";
   clearTimeout(previewTimer);
   showProgress(false);
-  setFetchSuccess(message);
+  setFetchSuccess("");
   updateModeClasses();
   renderBatchPanel();
   $("url-input").focus();
+}
+
+// Abort an in-flight fetch. The server stops the downloader (and any
+// subprocess it spawned) and deletes the staging directory, so the result is a
+// clean break: no progress bar, no result card, nothing queued.
+async function cancelFetch() {
+  if (!jobId || cancelling) return;
+  const cancelledId = jobId;
+  setCancelling(true);
+  try {
+    await api(`/api/jobs/${cancelledId}/cancel`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reason: "Cancelled by you." })
+    });
+    clearInterval(pollTimer);
+    pollTimer = null;
+    // Only reset if this job is still the one on screen.
+    if (jobId === cancelledId) {
+      jobId = null;
+      currentJob = null;
+      clearTimeout(previewTimer);
+      resultCard.classList.add("hidden");
+      showProgress(false);
+      setProgress(0, "");
+      setError(fetchError, "");
+      setFetchSuccess("Cancelled. Nothing was saved.");
+    }
+  } catch (err) {
+    clearInterval(pollTimer);
+    pollTimer = null;
+    if (jobId === cancelledId) showProgress(false);
+    setError(fetchError, err.message);
+  } finally {
+    setCancelling(false);
+    fetchButton.disabled = false;
+    $("url-input").focus();
+  }
 }
 
 function updateModeClasses() {
@@ -486,6 +586,7 @@ function addCurrentToBatch() {
   saveSuccess.classList.add("hidden");
   saveSuccess.textContent = "";
   setBatchMessage("");
+  setSavedCard(null);
   $("url-input").value = "";
   updateModeClasses();
   renderBatchPanel();
@@ -508,14 +609,17 @@ async function saveBatch() {
       body: JSON.stringify({ tracks })
     });
     const saved = data.tracks || [];
-    const dir = saved.length ? saved[0].relative.split("/").slice(0, -1).join("/") : "";
     batchTracks = [];
     batchDefaults = emptyBatchDefaults();
     batchActive = false;
     setBatchMessage("");
-    resetAfterSave(`Saved ${saved.length} songs${dir ? ` to ${dir}/` : ""}.`);
+    resetAfterSave();
+    setSavedCard(saved);
   } catch (err) {
+    // Keep the queue so the failed save can be retried.
     setBatchMessage(err.message, "error");
+    stopPolling();
+    fetchButton.disabled = false;
   } finally {
     batchSaveButton.disabled = false;
   }
@@ -591,6 +695,7 @@ function renderJob(job) {
   if (job.status === "running" || job.status === "queued") {
     showProgress(true);
     setProgress(job.progress, job.stage);
+    fetchButton.disabled = true;
   }
   if (job.status === "error") {
     showProgress(false);
@@ -617,6 +722,7 @@ function renderJob(job) {
     saveSuccess.classList.add("hidden");
     saveSuccess.textContent = "";
     setBatchMessage("");
+    setSavedCard(null);
     showWizard(false);
     formHeading.textContent = "Check the metadata";
     if (job.multi_track && Array.isArray(job.tracks) && job.tracks.length > 1) {
@@ -643,23 +749,37 @@ function renderJob(job) {
   }
 }
 
-function startPolling() {
+function stopPolling() {
   clearInterval(pollTimer);
+  pollTimer = null;
+}
+
+function startPolling() {
+  stopPolling();
   pollTimer = setInterval(async () => {
     if (!jobId) return;
+    const pollingId = jobId;
+    let job;
     try {
-      const job = await api(`/api/jobs/${jobId}`);
-      renderJob(job);
-      if (job.status === "done" || job.status === "error") {
-        clearInterval(pollTimer);
-        pollTimer = null;
-      }
+      job = await api(`/api/jobs/${pollingId}`);
     } catch (err) {
-      clearInterval(pollTimer);
-      pollTimer = null;
+      stopPolling();
+      if (jobId !== pollingId) return;
       showProgress(false);
       fetchButton.disabled = false;
       setError(fetchError, err.message);
+      return;
+    }
+    // A cancel may have landed while this poll was in flight; ignore the
+    // stale snapshot instead of redrawing the old job over a cleared screen.
+    if (jobId !== pollingId) return;
+    renderJob(job);
+    if (job.status === "done" || job.status === "error" || job.status === "cancelled") {
+      stopPolling();
+      if (job.status === "error") {
+        showProgress(false);
+        fetchButton.disabled = false;
+      }
     }
   }, 1500);
 }
@@ -680,6 +800,7 @@ fetchForm.addEventListener("submit", async (event) => {
   setError(fetchError, "");
   setError(saveError, "");
   setFetchSuccess("");
+  setSavedCard(null);
   saveSuccess.classList.add("hidden");
   saveSuccess.textContent = "";
   resultCard.classList.add("hidden");
@@ -721,15 +842,18 @@ saveForm.addEventListener("submit", async (event) => {
         body: JSON.stringify({ tracks })
       });
       const saved = data.tracks || [];
-      const dir = saved.length ? saved[0].relative.split("/").slice(0, -1).join("/") : "";
-      resetAfterSave(`Saved ${saved.length} tracks${dir ? ` to ${dir}/` : ""}.`);
+      resetAfterSave();
+      setSavedCard(saved);
     } else {
       const data = await api(`/api/jobs/${jobId}/save`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(currentMeta())
       });
-      resetAfterSave(`Saved to ${data.relative}`);
+      resetAfterSave();
+      // Single mode: the result card is hidden on reset, so use the line under
+      // the fetch card for the one destination.
+      setFetchSuccess(`Saved to ${data.relative}`);
     }
   } catch (err) {
     setError(saveError, err.message);
@@ -738,9 +862,17 @@ saveForm.addEventListener("submit", async (event) => {
   }
 });
 
-resetButton.addEventListener("click", () => {
+resetButton.addEventListener("click", async () => {
+  // "Start over" may be pressed while a fetch is still running, so abort it
+  // first; otherwise the download would keep going invisibly and then pop its
+  // result card back up.
+  if (jobId && (cancelling || fetchButton.disabled)) {
+    await cancelFetch();
+  }
   window.location.reload();
 });
+
+cancelButton.addEventListener("click", cancelFetch);
 
 singleModeButton.addEventListener("click", enterSingleMode);
 splitModeButton.addEventListener("click", enterSplitMode);

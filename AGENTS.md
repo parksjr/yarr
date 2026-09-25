@@ -15,7 +15,8 @@ framework, no build step). Runs as a Docker container; default port 7734.
 - app/chapters.py — chapter normalization + ffmpeg stream-copy split
 - app/metadata.py — mutagen ID3 tag read/write + artist/title guessing
 - app/library.py — destination path building + file placement
-- app/jobs.py — in-memory Job / JobStore
+- app/jobs.py — in-memory Job / JobStore (cancel flag, staging cleanup)
+- app/abort.py — cooperative abort signal for yt-dlp / spotDL downloads
 - app/static/ — index.html, app.js, style.css (served as-is)
 - Dockerfile, docker-compose.yml (local build), requirements.txt, entrypoint.sh
 - .github/workflows/docker-publish.yml — multi-arch GHCR publish on push to main
@@ -45,8 +46,21 @@ gitignored for scratch saves.
   deployments use `image: ghcr.io/parksjr/yarr:latest` with no build section
   (see README). Keep these straight: the local compose ignores a pulled GHCR
   image.
-- JobStore is in-memory; jobs disappear on restart and staging dirs are only
-  cleaned on a successful save, so abandoned downloads leak staging files.
+- JobStore is in-memory; jobs disappear on restart and staging dirs are cleaned
+  on a successful save, a failed fetch, a cancel, and when a job goes stale
+  (TTL purge), so abandoned downloads no longer leak staging files.
+- Cancelling a fetch (`POST /api/jobs/{id}/cancel`) sets the job's cancel event,
+  which every downloader hook checks, and clears the result so nothing from an
+  aborted fetch can be saved. app/abort.py holds the signal shared by both
+  downloaders: it reads as True and raises when called, which is what yt-dlp and
+  spotDL hooks need. On Docker Desktop the deleted staging dir can briefly
+  reappear because the worker still holds the files open; the cancel path
+  retries the delete for a few seconds, and the TTL purge is the backstop.
+- spotDL builds a fresh yt-dlp ``YoutubeDL`` per download and swallows per-song
+  exceptions, so a Spotify cancel needs three parts (see app/spotify.py):
+  a patched ``YoutubeDL`` class that installs the abort hook, tracked asyncio
+  tasks, and spotDL's own progress callback. Do not pass a dict to spotDL's
+  ``yt_dlp_args``: it is a CLI string that spotDL runs through shlex.
 - save_many and batch/save move files one at a time (validated up front). A
   mid-way failure can leave a partial save; it is not atomic.
 - Frontend is stateful vanilla JS in app.js. Single / split / batch modes share

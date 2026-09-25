@@ -10,6 +10,8 @@ import subprocess
 from pathlib import Path
 from typing import Optional
 
+from app.jobs import Job, JobCancelled
+
 
 def _to_float(value) -> Optional[float]:
     if value is None:
@@ -42,15 +44,24 @@ def normalize_chapters(raw_chapters, duration=None) -> list[dict]:
     return chapters
 
 
-def split_mp3_by_chapters(mp3_path: str, chapters: list[dict], out_dir: Path) -> list[str]:
+def split_mp3_by_chapters(
+    mp3_path: str, chapters: list[dict], out_dir: Path, job: Optional[Job] = None
+) -> list[str]:
     """Split ``mp3_path`` into one MP3 per chapter using stream copy.
 
     Returns the list of output paths in chapter order. Stream copy keeps the
     original MP3 encoding, so the split is quick and introduces no quality loss.
+
+    When ``job`` is given, a cancel request stops the split between chapters and
+    raises ``JobCancelled``. An ffmpeg process already running is left to finish
+    (a chapter copy takes about a second); the partial output is then removed by
+    the caller's staging cleanup.
     """
     out_dir.mkdir(parents=True, exist_ok=True)
     paths: list[str] = []
     for ch in chapters:
+        if job is not None and job.cancel_event.is_set():
+            raise JobCancelled()
         index = int(ch.get("index", len(paths) + 1))
         start = float(ch.get("start") or 0.0)
         end = ch.get("end")
@@ -78,5 +89,7 @@ def split_mp3_by_chapters(mp3_path: str, chapters: list[dict], out_dir: Path) ->
             raise RuntimeError(
                 f"Failed to split chapter {index} ({ch.get('title')}): {proc.stderr.strip()}"
             )
+        if job is not None and job.cancel_event.is_set():
+            raise JobCancelled()
         paths.append(str(out_path))
     return paths

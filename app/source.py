@@ -10,7 +10,7 @@ from typing import Optional
 from urllib.parse import urlparse
 
 from app import youtube
-from app.jobs import Job
+from app.jobs import Job, JobCancelled
 
 
 @dataclass
@@ -43,7 +43,12 @@ def detect(url: str) -> str:
 
 
 def fetch(job: Job, url: str, staging_dir: Path, quality: str) -> FetchResult:
-    """Detect the source and run its downloader into ``staging_dir``."""
+    """Detect the source and run its downloader into ``staging_dir``.
+
+    Raises ``JobCancelled`` when the user aborts the fetch.
+    """
+    if job.cancel_event.is_set():
+        raise JobCancelled()
     src = detect(url)
     if src == "youtube":
         result = youtube.fetch(job, url, staging_dir, quality)
@@ -55,5 +60,7 @@ def fetch(job: Job, url: str, staging_dir: Path, quality: str) -> FetchResult:
         result = spotify.fetch(job, url, staging_dir, quality)
     else:
         raise ValueError(f"Unsupported source: {src}")
+    if job.cancel_event.is_set():
+        raise JobCancelled()
     result.info["source"] = src
     return result

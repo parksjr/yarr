@@ -25,7 +25,10 @@
       <div id="fetch-success" class="success hidden" role="status"></div>
       <div id="progress" class="progress hidden">
         <div class="progress-bar"><div id="progress-fill" class="progress-fill"></div></div>
-        <p id="progress-text" class="progress-text">Working…</p>
+        <div class="progress-row">
+          <p id="progress-text" class="progress-text">Working…</p>
+          <button id="cancel-button" type="button" class="danger">Cancel</button>
+        </div>
       </div>
     </section>
 
@@ -118,6 +121,10 @@
       </div>
 
       <div id="save-error" class="error hidden" role="alert"></div>
+      <div class="card hidden" id="saved-card">
+        <h2 id="saved-heading">Saved</h2>
+        <ul id="saved-list" class="saved-list"></ul>
+      </div>
       <div id="save-success" class="success hidden" role="status"></div>
     </section>
   </main>
